@@ -844,6 +844,8 @@ namespace System.Net
 
 		internal void NextRead ()
 		{
+			Debug ("NEXT READ");
+
 			lock (this) {
 				if (Data.request != null)
 					Data.request.FinishedReading = true;
@@ -927,6 +929,7 @@ namespace System.Net
 				if (nstream == null)
 					return null;
 				s = nstream;
+				Debug ("CNC BEGIN READ: {0}", nstream);
 			}
 
 			IAsyncResult result = null;
@@ -1211,7 +1214,7 @@ namespace System.Net
 					nstream = null;
 				}
 
-				Debug ("CLOSE: {0} {1}", sendNext, socket != null);
+				Debug ("CNC CLOSE: {0} {1}", sendNext, socket != null);
 				Console.WriteLine (Environment.StackTrace);
 
 				if (socket != null) {
