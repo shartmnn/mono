@@ -82,6 +82,8 @@ namespace System.Net
 		NetworkCredential ntlm_credentials;
 		bool ntlm_authenticated;
 		bool unsafe_sharing;
+		readonly int id = ++next_id;
+		static int next_id;
 
 		enum NtlmAuthState
 		{
@@ -136,19 +138,29 @@ namespace System.Net
 			}
 		}
 
+		void Debug (string message, params object[] args)
+		{
+			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
+		}
+
 		bool CanReuse ()
 		{
 			// The real condition is !(socket.Poll (0, SelectMode.SelectRead) || socket.Available != 0)
 			// but if there's data pending to read (!) we won't reuse the socket.
-			return (socket.Poll (0, SelectMode.SelectRead) == false);
+			var canReuse = (socket.Poll (0, SelectMode.SelectRead) == false);
+			Debug ("CAN REUSE: {0}", canReuse);
+			return canReuse;
 		}
 		
 		void Connect (HttpWebRequest request)
 		{
 			lock (socketLock) {
+				Debug  ("CONNECT: {0}", socket != null);
 				if (socket != null && socket.Connected && status == WebExceptionStatus.Success) {
+					Debug ("CONNECT #1");
 					// Take the chunked stream to the expected state (State.None)
 					if (CanReuse () && CompleteChunkedRead ()) {
+						Debug ("CONNECT #2");
 						reused = true;
 						return;
 					}
@@ -159,6 +171,8 @@ namespace System.Net
 					socket.Close();
 					socket = null;
 				}
+
+				Debug ("CONNECT #3");
 
 				chunkStream = null;
 				IPHostEntry hostEntry = sPoint.HostEntry;
@@ -200,6 +214,7 @@ namespace System.Net
 						socket.Close ();
 						socket = null;
 						status = WebExceptionStatus.ConnectFailure;
+						Debug ("CONNECT FAILURE");
 					} else {
 						try {
 							if (request.Aborted)
@@ -797,6 +812,7 @@ namespace System.Net
 				return null;
 
 			lock (this) {
+				Debug ("SEND REQUEST: {0}", busy);
 				if (!busy) {
 					busy = true;
 					status = WebExceptionStatus.Success;
@@ -839,10 +855,15 @@ namespace System.Net
 					keepAlive = (this.keepAlive && cncHeader.IndexOf ("keep-alive", StringComparison.Ordinal) != -1);
 				}
 
+				Debug ("NEXT READ: {0} {1}", keepAlive, socket != null);
+
 				if ((socket != null && !socket.Connected) ||
 				   (!keepAlive || (cncHeader != null && cncHeader.IndexOf ("close", StringComparison.Ordinal) != -1))) {
+					Debug ("NEXT READ - CLOSE");
 					Close (false);
 				}
+
+				Debug ("NEXT READ #1: {0}", priority_request != null);
 
 				busy = false;
 				if (priority_request != null) {
@@ -1189,6 +1210,8 @@ namespace System.Net
 					} catch {}
 					nstream = null;
 				}
+
+				Debug ("CLOSE: {0} {1}", sendNext, socket != null);
 
 				if (socket != null) {
 					try {
