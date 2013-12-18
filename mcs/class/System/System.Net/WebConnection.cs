@@ -517,6 +517,7 @@ namespace System.Net
 			WebConnection cnc = (WebConnection)result.AsyncState;
 			WebConnectionData data = cnc.Data;
 			Stream ns = cnc.nstream;
+			cnc.Debug ("CNC READ DONE: {0}", ns != null);
 			if (ns == null) {
 				cnc.Close (true);
 				return;
@@ -547,6 +548,7 @@ namespace System.Net
 
 			int pos = -1;
 			nread += cnc.position;
+			cnc.Debug ("CNC READ DONE #1: {0} {1}", nread, data.ReadState);
 			if (data.ReadState == ReadState.None) { 
 				Exception exc = null;
 				try {
@@ -587,6 +589,7 @@ namespace System.Net
 				tencoding = data.Headers ["Transfer-Encoding"];
 
 			cnc.chunkedRead = (tencoding != null && tencoding.IndexOf ("chunked", StringComparison.OrdinalIgnoreCase) != -1);
+			cnc.Debug ("CNC READ DONE: {0} {1} {2} {3}", cnc.chunkedRead, cnc.chunkStream != null, pos, nread);
 			if (!cnc.chunkedRead) {
 				stream.ReadBuffer = cnc.buffer;
 				stream.ReadBufferOffset = pos;
