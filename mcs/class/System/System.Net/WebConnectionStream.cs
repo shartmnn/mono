@@ -757,6 +757,8 @@ namespace System.Net
 				return;
 			}
 
+			Debug ("CLOSE: {0} {1} {2}", isRead, nextReadCalled, allowBuffering);
+
 			if (isRead) {
 				if (!nextReadCalled) {
 					CheckComplete ();
