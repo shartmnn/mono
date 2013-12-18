@@ -1212,6 +1212,7 @@ namespace System.Net
 				}
 
 				Debug ("CLOSE: {0} {1}", sendNext, socket != null);
+				Console.WriteLine (Environment.StackTrace);
 
 				if (socket != null) {
 					try {
