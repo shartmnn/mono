@@ -199,8 +199,14 @@ namespace System.Net
 			get { return writeBuffer != null ? (int) writeBuffer.Length : (-1); }
 		}
 
+		void Debug (string message, params object[] args)
+		{
+			Console.WriteLine ("[{0}]: {1}", Thread.CurrentThread.ManagedThreadId, string.Format (message, args));
+		}
+
 		internal void ForceCompletion ()
 		{
+			Debug ("FORCE COMPLETION: {0}", nextReadCalled);
 			if (!nextReadCalled) {
 				if (contentLength == Int32.MaxValue)
 					contentLength = 0;
@@ -212,6 +218,7 @@ namespace System.Net
 		internal void CheckComplete ()
 		{
 			bool nrc = nextReadCalled;
+			Debug ("CHECK COMPLETE: {0} {1} {2} {3} {4}", nrc, readBufferOffset, readBufferSize, contentLength, readBufferSize - readBufferOffset == contentLength);
 			if (!nrc && readBufferSize - readBufferOffset == contentLength) {
 				nextReadCalled = true;
 				cnc.NextRead ();
@@ -220,7 +227,9 @@ namespace System.Net
 
 		internal void ReadAll ()
 		{
+			Debug ("READ ALL: {0} {1} {2}", isRead, read_eof, totalRead, contentLength, nextReadCalled);
 			if (!isRead || read_eof || totalRead >= contentLength || nextReadCalled) {
+				Debug ("READ ALL #1: {0} {1}", isRead, nextReadCalled);
 				if (isRead && !nextReadCalled) {
 					nextReadCalled = true;
 					cnc.NextRead ();
@@ -281,6 +290,8 @@ namespace System.Net
 				totalRead = 0;
 				nextReadCalled = true;
 			}
+
+			Debug ("READ ALL #2");
 
 			cnc.NextRead ();
 		}

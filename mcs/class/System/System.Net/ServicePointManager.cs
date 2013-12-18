@@ -46,6 +46,7 @@ using System.Text.RegularExpressions;
 #endif
 
 using System;
+using System.Threading;
 using System.Collections;
 using System.Collections.Specialized;
 using System.Configuration;
@@ -321,10 +322,17 @@ namespace System.Net
 			return FindServicePoint (new Uri(uriString), proxy);
 		}
 
+		static void Debug (string message, params object[] args)
+		{
+			Console.WriteLine ("[{0}]: {1}", Thread.CurrentThread.ManagedThreadId, string.Format (message, args));
+		}
+
 		public static ServicePoint FindServicePoint (Uri address, IWebProxy proxy)
 		{
 			if (address == null)
 				throw new ArgumentNullException ("address");
+
+			Debug ("FIND SERVICE POINT: {0}", address);
 
 			RecycleServicePoints ();
 
@@ -349,6 +357,7 @@ namespace System.Net
 			lock (servicePoints) {
 				SPKey key = new SPKey (origAddress, usesProxy ? address : null, useConnect);
 				sp = servicePoints [key] as ServicePoint;
+				Debug ("FIND SERVICE POINT #1: {0} {1} {2}", key, servicePoints.Count, sp != null);
 				if (sp != null)
 					return sp;
 

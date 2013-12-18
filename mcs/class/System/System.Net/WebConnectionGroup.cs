@@ -30,6 +30,7 @@
 //
 
 using System;
+using System.Threading;
 using System.Collections;
 using System.Net.Configuration;
 using System.Net.Sockets;
@@ -43,6 +44,8 @@ namespace System.Net
 		ArrayList connections;
 		Random rnd;
 		Queue queue;
+		static int next_id;
+		int id = ++next_id;
 
 		public WebConnectionGroup (ServicePoint sPoint, string name)
 		{
@@ -132,6 +135,11 @@ namespace System.Net
 			}
 		}
 
+		void Debug (string message, params object[] args)
+		{
+			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
+		}
+
 		WebConnection CreateOrReuseConnection (HttpWebRequest request)
 		{
 			// lock is up there.
@@ -139,9 +147,11 @@ namespace System.Net
 			WeakReference cncRef;
 
 			int count = connections.Count;
+			Debug ("CREATE OR REUSE: {0}", count);
 			for (int i = 0; i < count; i++) {
 				WeakReference wr = connections [i] as WeakReference;
 				cnc = wr.Target as WebConnection;
+				Debug ("CREATE OR REUSE #1: {0} {1}", i, cnc != null);
 				if (cnc == null) {
 					connections.RemoveAt (i);
 					count--;
@@ -149,12 +159,16 @@ namespace System.Net
 					continue;
 				}
 
+				Debug ("CREATE OR REUSE #1a: {0}", cnc.Busy);
+
 				if (cnc.Busy)
 					continue;
 
 				PrepareSharingNtlm (cnc, request);
 				return cnc;
 			}
+
+			Debug ("CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, count);
 
 			if (sPoint.ConnectionLimit > count) {
 				cnc = new WebConnection (this, sPoint);
@@ -168,6 +182,7 @@ namespace System.Net
 			int idx = (count > 1) ? rnd.Next (0, count) : 0;
 			cncRef = (WeakReference) connections [idx];
 			cnc = cncRef.Target as WebConnection;
+			Debug ("CREATE OR REUSE #3: {0}", cnc != null);
 			if (cnc == null) {
 				cnc = new WebConnection (this, sPoint);
 				connections.RemoveAt (idx);
