@@ -217,12 +217,20 @@ namespace System.Net
 				cnc.NextRead ();
 			}
 		}
-		
+
 		internal void CheckComplete ()
 		{
-			bool nrc = nextReadCalled;
-			Debug ("CHECK COMPLETE: {0} {1} {2} {3} {4}", nrc, readBufferOffset, readBufferSize, contentLength, readBufferSize - readBufferOffset == contentLength);
-			if (!nrc && readBufferSize - readBufferOffset == contentLength) {
+			var nrc = nextReadCalled;
+			var cstr = cnc.ChunkStream;
+
+			Debug ("CHECK COMPLETE: {0} {1} {2} {3} {4} {5}", nrc, readBufferOffset, readBufferSize, contentLength, readBufferSize - readBufferOffset == contentLength, cstr != null);
+			if (nrc)
+				return;
+			if (readBufferSize - readBufferOffset == contentLength) {
+				nextReadCalled = true;
+				cnc.NextRead ();
+			} else if (cstr != null && cstr.TotalDataSize == contentLength) {
+				Debug ("CHECK COMPLETE - CHUNK COMPLETED");
 				nextReadCalled = true;
 				cnc.NextRead ();
 			}
