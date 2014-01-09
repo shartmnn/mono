@@ -34,6 +34,7 @@ using System.Threading;
 using System.Collections;
 using System.Net.Configuration;
 using System.Net.Sockets;
+using System.Diagnostics;
 
 namespace System.Net
 {
@@ -135,6 +136,7 @@ namespace System.Net
 			}
 		}
 
+		[Conditional ("DEBUG")]
 		void Debug (string message, params object[] args)
 		{
 			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));

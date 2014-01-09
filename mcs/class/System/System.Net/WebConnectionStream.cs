@@ -32,6 +32,7 @@
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Diagnostics;
 
 namespace System.Net
 {
@@ -202,6 +203,7 @@ namespace System.Net
 			get { return writeBuffer != null ? (int) writeBuffer.Length : (-1); }
 		}
 
+		[Conditional ("DEBUG")]
 		void Debug (string message, params object[] args)
 		{
 			Console.WriteLine ("[{0}]: {1}", Thread.CurrentThread.ManagedThreadId, string.Format (message, args));

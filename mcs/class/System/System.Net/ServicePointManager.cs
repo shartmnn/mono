@@ -55,6 +55,7 @@ using System.Security.Cryptography.X509Certificates;
 
 using System.Globalization;
 using System.Net.Security;
+using System.Diagnostics;
 
 //
 // notes:
@@ -322,6 +323,7 @@ namespace System.Net
 			return FindServicePoint (new Uri(uriString), proxy);
 		}
 
+		[Conditional ("DEBUG")]
 		static void Debug (string message, params object[] args)
 		{
 			Console.WriteLine ("[{0}]: {1}", Thread.CurrentThread.ManagedThreadId, string.Format (message, args));
