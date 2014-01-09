@@ -1224,7 +1224,6 @@ namespace System.Net
 				}
 
 				Debug ("CNC CLOSE: {0} {1}", sendNext, socket != null);
-				Console.WriteLine (Environment.StackTrace);
 
 				if (socket != null) {
 					try {
