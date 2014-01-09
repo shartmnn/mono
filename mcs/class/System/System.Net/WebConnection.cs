@@ -110,6 +110,10 @@ namespace System.Net
 		static extern void monotouch_start_wwan (string uri);
 #endif
 
+		internal ChunkStream ChunkStream {
+			get { return chunkStream; }
+		}
+
 		public WebConnection (WebConnectionGroup group, ServicePoint sPoint)
 		{
 			this.sPoint = sPoint;
@@ -589,7 +593,7 @@ namespace System.Net
 				tencoding = data.Headers ["Transfer-Encoding"];
 
 			cnc.chunkedRead = (tencoding != null && tencoding.IndexOf ("chunked", StringComparison.OrdinalIgnoreCase) != -1);
-			cnc.Debug ("CNC READ DONE: {0} {1} {2} {3}", cnc.chunkedRead, cnc.chunkStream != null, pos, nread);
+			cnc.Debug ("CNC READ DONE #2: {0} {1} {2} {3}", cnc.chunkedRead, cnc.chunkStream != null, pos, nread);
 			if (!cnc.chunkedRead) {
 				stream.ReadBuffer = cnc.buffer;
 				stream.ReadBufferOffset = pos;
