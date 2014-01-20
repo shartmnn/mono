@@ -63,6 +63,8 @@ namespace System.Net
 			lock (connections) {
 				WeakReference cncRef = null;
 
+				Debug ("WCG CLOSE");
+
 				int end = connections.Count;
 				// ArrayList removed = null;
 				for (int i = 0; i < end; i++) {
@@ -89,6 +91,7 @@ namespace System.Net
 					cncRef = (WeakReference) connections [i];
 					cnc = cncRef.Target as WebConnection;
 					if (cnc == null) {
+						Debug ("WCG GET CONNECTION - REMOVED: {0}", i);
 						if (removed == null)
 							removed = new ArrayList (1);
 
@@ -149,19 +152,17 @@ namespace System.Net
 			WeakReference cncRef;
 
 			int count = connections.Count;
-			Debug ("CREATE OR REUSE: {0}", count);
+			Debug ("WCG CREATE OR REUSE: {0}", count);
 			for (int i = 0; i < count; i++) {
 				WeakReference wr = connections [i] as WeakReference;
 				cnc = wr.Target as WebConnection;
-				Debug ("CREATE OR REUSE #1: {0} {1}", i, cnc != null);
+				Debug ("WCG CREATE OR REUSE #1: {0} {1}", i, cnc != null ? cnc.Busy.ToString () : "<null>");
 				if (cnc == null) {
 					connections.RemoveAt (i);
 					count--;
 					i--;
 					continue;
 				}
-
-				Debug ("CREATE OR REUSE #1a: {0}", cnc.Busy);
 
 				if (cnc.Busy)
 					continue;
@@ -170,7 +171,7 @@ namespace System.Net
 				return cnc;
 			}
 
-			Debug ("CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, count);
+			Debug ("WCG CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, count);
 
 			if (sPoint.ConnectionLimit > count) {
 				cnc = new WebConnection (this, sPoint);
@@ -184,7 +185,7 @@ namespace System.Net
 			int idx = (count > 1) ? rnd.Next (0, count) : 0;
 			cncRef = (WeakReference) connections [idx];
 			cnc = cncRef.Target as WebConnection;
-			Debug ("CREATE OR REUSE #3: {0}", cnc != null);
+			Debug ("WCG CREATE OR REUSE #3: {0}", cnc != null);
 			if (cnc == null) {
 				cnc = new WebConnection (this, sPoint);
 				connections.RemoveAt (idx);
