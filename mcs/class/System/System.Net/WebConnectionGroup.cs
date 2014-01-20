@@ -32,6 +32,7 @@
 using System;
 using System.Threading;
 using System.Collections;
+using System.Collections.Generic;
 using System.Net.Configuration;
 using System.Net.Sockets;
 using System.Diagnostics;
@@ -42,8 +43,7 @@ namespace System.Net
 	{
 		ServicePoint sPoint;
 		string name;
-		ArrayList connections;
-		Random rnd;
+		LinkedList<WebConnection> connections;
 		Queue queue;
 		static int next_id;
 		int id = ++next_id;
@@ -52,7 +52,7 @@ namespace System.Net
 		{
 			this.sPoint = sPoint;
 			this.name = name;
-			connections = new ArrayList (1);
+			connections = new LinkedList<WebConnection> ();
 			queue = new Queue ();
 		}
 
@@ -61,53 +61,17 @@ namespace System.Net
 			//TODO: what do we do with the queue? Empty it out and abort the requests?
 			//TODO: abort requests or wait for them to finish
 			lock (connections) {
-				WeakReference cncRef = null;
-
-				Debug ("WCG CLOSE");
-
-				int end = connections.Count;
-				// ArrayList removed = null;
-				for (int i = 0; i < end; i++) {
-					cncRef = (WeakReference) connections [i];
-					WebConnection cnc = cncRef.Target as WebConnection;
-					if (cnc != null) {
-						cnc.Close (false);
-					}
-				}
+				foreach (var cnc in connections)
+					cnc.Close (false);
 				connections.Clear ();
 			}
 		}
 
 		public WebConnection GetConnection (HttpWebRequest request)
 		{
-			WebConnection cnc = null;
 			lock (connections) {
-				WeakReference cncRef = null;
-
-				// Remove disposed connections
-				int end = connections.Count;
-				ArrayList removed = null;
-				for (int i = 0; i < end; i++) {
-					cncRef = (WeakReference) connections [i];
-					cnc = cncRef.Target as WebConnection;
-					if (cnc == null) {
-						Debug ("WCG GET CONNECTION - REMOVED: {0}", i);
-						if (removed == null)
-							removed = new ArrayList (1);
-
-						removed.Add (i);
-					}
-				}
-
-				if (removed != null) {
-					for (int i = removed.Count - 1; i >= 0; i--)
-						connections.RemoveAt ((int) removed [i]);
-				}
-
-				cnc = CreateOrReuseConnection (request);
+				return CreateOrReuseConnection (request);
 			}
-
-			return cnc;
 		}
 
 		static void PrepareSharingNtlm (WebConnection cnc, HttpWebRequest request)
@@ -145,52 +109,42 @@ namespace System.Net
 			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
 		}
 
-		WebConnection CreateOrReuseConnection (HttpWebRequest request)
+		WebConnection FindIdleConnection ()
 		{
-			// lock is up there.
-			WebConnection cnc;
-			WeakReference cncRef;
-
-			int count = connections.Count;
-			Debug ("WCG CREATE OR REUSE: {0}", count);
-			for (int i = 0; i < count; i++) {
-				WeakReference wr = connections [i] as WeakReference;
-				cnc = wr.Target as WebConnection;
-				Debug ("WCG CREATE OR REUSE #1: {0} {1}", i, cnc != null ? cnc.Busy.ToString () : "<null>");
-				if (cnc == null) {
-					connections.RemoveAt (i);
-					count--;
-					i--;
-					continue;
-				}
-
+			foreach (var cnc in connections) {
 				if (cnc.Busy)
 					continue;
 
+				connections.Remove (cnc);
+				connections.AddFirst (cnc);
+				return cnc;
+			}
+
+			return null;
+		}
+
+		WebConnection CreateOrReuseConnection (HttpWebRequest request)
+		{
+			var cnc = FindIdleConnection ();
+			Debug ("WCG CREATE OR REUSE: {0}", cnc != null);
+			if (cnc != null) {
 				PrepareSharingNtlm (cnc, request);
 				return cnc;
 			}
 
-			Debug ("WCG CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, count);
+			Debug ("WCG CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, connections.Count);
 
-			if (sPoint.ConnectionLimit > count) {
+			if (sPoint.ConnectionLimit > connections.Count) {
 				cnc = new WebConnection (this, sPoint);
-				connections.Add (new WeakReference (cnc));
+				connections.AddFirst (cnc);
 				return cnc;
 			}
 
-			if (rnd == null)
-				rnd = new Random ();
+			Debug ("WCG CREATE OR REUSE #3");
 
-			int idx = (count > 1) ? rnd.Next (0, count) : 0;
-			cncRef = (WeakReference) connections [idx];
-			cnc = cncRef.Target as WebConnection;
-			Debug ("WCG CREATE OR REUSE #3: {0}", cnc != null);
-			if (cnc == null) {
-				cnc = new WebConnection (this, sPoint);
-				connections.RemoveAt (idx);
-				connections.Add (new WeakReference (cnc));
-			}
+			cnc = connections.Last.Value;
+			connections.Remove (cnc);
+			connections.AddFirst (cnc);
 			return cnc;
 		}
 
