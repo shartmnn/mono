@@ -394,6 +394,7 @@ namespace System.Net
 				IDictionaryEnumerator e = servicePoints.GetEnumerator ();
 				while (e.MoveNext ()) {
 					ServicePoint sp = (ServicePoint) e.Value;
+					sp.CheckAvailableForRecycling ();
 					if (sp.AvailableForRecycling) {
 						toRemove.Add (e.Key);
 					}

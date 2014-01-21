@@ -31,6 +31,7 @@
 //
 
 using System;
+using System.Diagnostics;
 using System.Collections;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -44,6 +45,7 @@ namespace System.Net
 		int connectionLimit;
 		int maxIdleTime;
 		int currentConnections;
+		int busyConnections;
 		DateTime idleSince;
 		Version protocolVersion;
 		X509Certificate certificate;
@@ -60,6 +62,9 @@ namespace System.Net
 		bool tcp_keepalive;
 		int tcp_keepalive_time;
 		int tcp_keepalive_interval;
+
+		int id = ++next_id;
+		static int next_id;
 		
 		// Constructors
 
@@ -67,8 +72,9 @@ namespace System.Net
 		{
 			this.uri = uri;  
 			this.connectionLimit = connectionLimit;
-			this.maxIdleTime = maxIdleTime;			
+			this.maxIdleTime = maxIdleTime;	
 			this.currentConnections = 0;
+			this.busyConnections = 0;
 			this.idleSince = DateTime.UtcNow;
 		}
 		
@@ -245,6 +251,17 @@ namespace System.Net
 			}
 		}
 
+		[Conditional ("DEBUG")]
+		void Debug (string message, params object[] args)
+		{
+			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
+		}
+
+		internal void CheckAvailableForRecycling ()
+		{
+			Debug ("CHECK RECYCLING: {0} {1} {2} {3} {4}", CurrentConnections, busyConnections, TimeSpan.FromMilliseconds (maxIdleTime), DateTime.UtcNow, IdleSince.AddMilliseconds (maxIdleTime));
+		}
+
 		internal Hashtable Groups {
 			get {
 				if (groups == null)
@@ -337,20 +354,15 @@ namespace System.Net
 			return false;
 		}
 
-		internal void IncrementConnection ()
+		internal void OnConnectionStateChanged (WebConnection cnc, bool busy)
 		{
 			lock (locker) {
-				currentConnections++;
-				idleSince = DateTime.UtcNow.AddMilliseconds (1000000);
-			}
-		}
-
-		internal void DecrementConnection ()
-		{
-			lock (locker) {
-				currentConnections--;
-				if (currentConnections == 0)
-					idleSince = DateTime.UtcNow;
+				if (busy) {
+					busyConnections++;
+				} else {
+					busyConnections--;
+				}
+				Debug ("SP ON CONNECTION STATE CHANGED: {0} {1}", busy, busyConnections);
 			}
 		}
 
