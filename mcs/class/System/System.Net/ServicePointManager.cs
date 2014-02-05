@@ -132,7 +132,7 @@ namespace System.Net
 		
 		private static ICertificatePolicy policy = new DefaultCertificatePolicy ();
 		private static int defaultConnectionLimit = DefaultPersistentConnectionLimit;
-		private static int maxServicePointIdleTime = 900000; // 15 minutes
+		private static int maxServicePointIdleTime = 100000; // 100 seconds
 		private static int maxServicePoints = 0;
 		private static bool _checkCRL = false;
 		private static SecurityProtocolType _securityProtocol = SecurityProtocolType.Ssl3 | SecurityProtocolType.Tls;
