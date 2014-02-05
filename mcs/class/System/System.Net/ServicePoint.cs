@@ -31,6 +31,7 @@
 //
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Collections;
 using System.Net.Sockets;
@@ -45,14 +46,13 @@ namespace System.Net
 		int connectionLimit;
 		int maxIdleTime;
 		int currentConnections;
-		int busyConnections;
 		DateTime idleSince;
 		Version protocolVersion;
 		X509Certificate certificate;
 		X509Certificate clientCertificate;
 		IPHostEntry host;
 		bool usesProxy;
-		Hashtable groups;
+		Dictionary<string,WebConnectionGroup> groups;
 		bool sendContinue = true;
 		bool useConnect;
 		object locker = new object ();
@@ -62,9 +62,12 @@ namespace System.Net
 		bool tcp_keepalive;
 		int tcp_keepalive_time;
 		int tcp_keepalive_interval;
+		Timer idleTimer;
 
 		int id = ++next_id;
 		static int next_id;
+
+		internal readonly object SyncRoot = new object ();
 		
 		// Constructors
 
@@ -74,8 +77,9 @@ namespace System.Net
 			this.connectionLimit = connectionLimit;
 			this.maxIdleTime = maxIdleTime;	
 			this.currentConnections = 0;
-			this.busyConnections = 0;
 			this.idleSince = DateTime.UtcNow;
+
+			idleTimer = new Timer (IdleTimerCallback, null, maxIdleTime, maxIdleTime);
 		}
 		
 		// Properties
@@ -138,18 +142,18 @@ namespace System.Net
 			get {
 				return idleSince.ToLocalTime ();
 			}
-			internal set {
-				lock (locker)
-					idleSince = value.ToUniversalTime ();
-			}
 		}
-		
+
 		public int MaxIdleTime {
 			get { return maxIdleTime; }
 			set { 
 				if (value < Timeout.Infinite || value > Int32.MaxValue)
 					throw new ArgumentOutOfRangeException ();
-				this.maxIdleTime = value; 
+
+				lock (SyncRoot) {
+					maxIdleTime = value; 
+					idleTimer.Change (maxIdleTime, maxIdleTime);
+				}
 			}
 		}
 		
@@ -243,32 +247,39 @@ namespace System.Net
 			set { useConnect = value; }
 		}
 
-		internal bool AvailableForRecycling {
-			get { 
-				return CurrentConnections == 0
-				    && maxIdleTime != Timeout.Infinite
-			            && DateTime.UtcNow >= IdleSince.AddMilliseconds (maxIdleTime);
-			}
-		}
-
-		[Conditional ("DEBUG")]
-		void Debug (string message, params object[] args)
+		[Conditional ("SP_DEBUG")]
+		internal void Debug (string message, params object[] args)
 		{
 			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
 		}
 
-		internal void CheckAvailableForRecycling ()
+		internal bool CheckAvailableForRecycling (out DateTime outIdleSince)
 		{
-			Debug ("CHECK RECYCLING: {0} {1} {2} {3} {4}", CurrentConnections, busyConnections, TimeSpan.FromMilliseconds (maxIdleTime), DateTime.UtcNow, IdleSince.AddMilliseconds (maxIdleTime));
+			lock (SyncRoot) {
+				Debug ("IDLE TIMER");
+				idleSince = DateTime.MinValue;
+				var keys = new List<string> (groups.Keys);
+				foreach (var name in keys) {
+					var group = groups [name];
+					if (group.OnIdleTimer (TimeSpan.FromMilliseconds (maxIdleTime), ref idleSince))
+						continue;
+					groups.Remove (name);
+				}
+				Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+				outIdleSince = idleSince;
+				return groups.Count == 0;
+			}
 		}
 
-		internal Hashtable Groups {
-			get {
-				if (groups == null)
-					groups = new Hashtable ();
+		void IdleTimerCallback (object obj)
+		{
+			DateTime dummy;
+			CheckAvailableForRecycling (out dummy);
+		}
 
-				return groups;
-			}
+		internal void OnConnectionStateChanged (IWebConnectionState state, bool idle)
+		{
+			Debug ("ON STATE CHANGED: {0} {1}", state, idle);
 		}
 
 		internal IPHostEntry HostEntry
@@ -320,12 +331,17 @@ namespace System.Net
 			if (name == null)
 				name = "";
 
-			WebConnectionGroup group = Groups [name] as WebConnectionGroup;
-			if (group != null)
+			if (groups == null)
+				groups = new Dictionary<string, WebConnectionGroup> ();
+
+			WebConnectionGroup group;
+			if (groups.TryGetValue (name, out group))
 				return group;
 
 			group = new WebConnectionGroup (this, name);
-			Groups [name] = group;
+			group.ConnectionCreated += (s, e) => currentConnections++;
+			group.ConnectionClosed += (s, e) => currentConnections--;
+			groups.Add (name, group);
 			return group;
 		}
 
@@ -333,7 +349,7 @@ namespace System.Net
 		{
 			WebConnection cnc;
 			
-			lock (locker) {
+			lock (SyncRoot) {
 				WebConnectionGroup cncGroup = GetConnectionGroup (groupName);
 				cnc = cncGroup.GetConnection (request);
 			}
@@ -343,7 +359,7 @@ namespace System.Net
 #endif
 		public bool CloseConnectionGroup (string connectionGroupName)
 		{
-			lock (locker) {
+			lock (SyncRoot) {
 				WebConnectionGroup cncGroup = GetConnectionGroup (connectionGroupName);
 				if (cncGroup != null) {
 					cncGroup.Close ();
@@ -352,18 +368,6 @@ namespace System.Net
 			}
 
 			return false;
-		}
-
-		internal void OnConnectionStateChanged (WebConnection cnc, bool busy)
-		{
-			lock (locker) {
-				if (busy) {
-					busyConnections++;
-				} else {
-					busyConnections--;
-				}
-				Debug ("SP ON CONNECTION STATE CHANGED: {0} {1}", busy, busyConnections);
-			}
 		}
 
 		internal void SetCertificates (X509Certificate client, X509Certificate server) 

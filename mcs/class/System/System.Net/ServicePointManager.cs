@@ -48,6 +48,7 @@ using System.Text.RegularExpressions;
 using System;
 using System.Threading;
 using System.Collections;
+using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Configuration;
 using System.Net.Configuration;
@@ -389,15 +390,21 @@ namespace System.Net
 
 		internal static void RecycleServicePoints ()
 		{
-			ArrayList toRemove = new ArrayList ();
 			lock (servicePoints) {
+				var toRemove = new ArrayList ();
+				var idleList = new SortedDictionary<DateTime, ServicePoint> ();
 				IDictionaryEnumerator e = servicePoints.GetEnumerator ();
 				while (e.MoveNext ()) {
 					ServicePoint sp = (ServicePoint) e.Value;
-					sp.CheckAvailableForRecycling ();
-					if (sp.AvailableForRecycling) {
+					DateTime idleSince;
+					if (sp.CheckAvailableForRecycling (out idleSince)) {
 						toRemove.Add (e.Key);
+						continue;
 					}
+
+					while (idleList.ContainsKey (idleSince))
+						idleSince = idleSince.AddMilliseconds (1);
+					idleList.Add (idleSince, sp);
 				}
 				
 				for (int i = 0; i < toRemove.Count; i++) 
@@ -407,19 +414,11 @@ namespace System.Net
 					return;
 
 				// get rid of the ones with the longest idle time
-				SortedList list = new SortedList (servicePoints.Count);
-				e = servicePoints.GetEnumerator ();
-				while (e.MoveNext ()) {
-					ServicePoint sp = (ServicePoint) e.Value;
-					if (sp.CurrentConnections == 0) {
-						while (list.ContainsKey (sp.IdleSince))
-							sp.IdleSince = sp.IdleSince.AddMilliseconds (1);
-						list.Add (sp.IdleSince, sp.Address);
-					}
+				foreach (var sp in idleList.Values) {
+					if (servicePoints.Count <= maxServicePoints)
+						break;
+					servicePoints.Remove (sp);
 				}
-				
-				for (int i = 0; i < list.Count && servicePoints.Count > maxServicePoints; i++)
-					servicePoints.Remove (list.GetByIndex (i));
 			}
 		}
 #if SECURITY_DEP

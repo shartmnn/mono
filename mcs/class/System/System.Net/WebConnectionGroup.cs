@@ -46,8 +46,6 @@ namespace System.Net
 		LinkedList<ConnectionState> connections;
 		Queue queue;
 
-		protected readonly object SyncRoot = new object ();
-
 		static int next_id;
 		int id = ++next_id;
 
@@ -59,15 +57,32 @@ namespace System.Net
 			queue = new Queue ();
 		}
 
+		public event EventHandler ConnectionCreated;
+		public event EventHandler ConnectionClosed;
+
+		void OnConnectionCreated ()
+		{
+			if (ConnectionCreated != null)
+				ConnectionCreated (this, null);
+		}
+
+		void OnConnectionClosed ()
+		{
+			if (ConnectionClosed != null)
+				ConnectionClosed (this, null);
+		}
+
 		public void Close ()
 		{
 			//TODO: what do we do with the queue? Empty it out and abort the requests?
 			//TODO: abort requests or wait for them to finish
-			lock (SyncRoot) {
+			lock (sPoint.SyncRoot) {
 				foreach (var cnc in connections) {
-					if (cnc.Connection != null)
-						cnc.Connection.Close (false);
+					if (cnc.Connection == null)
+						continue;
+					cnc.Connection.Close (false);
 					cnc.Connection = null;
+					OnConnectionClosed ();
 				}
 				connections.Clear ();
 			}
@@ -75,7 +90,7 @@ namespace System.Net
 
 		public WebConnection GetConnection (HttpWebRequest request)
 		{
-			lock (SyncRoot) {
+			lock (sPoint.SyncRoot) {
 				return CreateOrReuseConnection (request);
 			}
 		}
@@ -119,6 +134,7 @@ namespace System.Net
 		{
 			var cnc = new ConnectionState (this);
 			connections.AddFirst (cnc);
+			OnConnectionCreated ();
 			return cnc.Connection;
 		}
 
@@ -155,9 +171,8 @@ namespace System.Net
 
 			Debug ("WCG CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, connections.Count);
 
-			if (sPoint.ConnectionLimit > connections.Count) {
+			if (sPoint.ConnectionLimit > connections.Count)
 				return CreateConnection ();
-			}
 
 			Debug ("WCG CREATE OR REUSE #3");
 
@@ -170,6 +185,36 @@ namespace System.Net
 
 		internal Queue Queue {
 			get { return queue; }
+		}
+
+		internal bool OnIdleTimer (TimeSpan maxIdleTime, ref DateTime idleSince)
+		{
+			var list = new List<ConnectionState> (connections);
+			foreach (var cnc in list) {
+				if (cnc.Connection == null) {
+					connections.Remove (cnc);
+					continue;
+				}
+
+				if (cnc.Busy)
+					continue;
+
+				sPoint.Debug ("CHECK IDLE: {0}", DateTime.UtcNow - cnc.IdleSince);
+
+				if (DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
+					if (cnc.IdleSince > idleSince)
+						idleSince = cnc.IdleSince;
+					continue;
+				}
+
+				sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
+				cnc.Connection.Close (false);
+				connections.Remove (cnc);
+				OnConnectionClosed ();
+			}
+
+			sPoint.Debug ("ON IDLE TIMER: {0} {1}", connections.Count, idleSince);
+			return connections.Count > 0;
 		}
 
 		class ConnectionState : IWebConnectionState {
@@ -189,7 +234,7 @@ namespace System.Net
 
 			public bool Busy {
 				get {
-					lock (Group.SyncRoot) {
+					lock (ServicePoint.SyncRoot) {
 						return busy;
 					}
 				}
@@ -197,7 +242,7 @@ namespace System.Net
 
 			public DateTime IdleSince {
 				get {
-					lock (Group.SyncRoot) {
+					lock (ServicePoint.SyncRoot) {
 						return idleSince;
 					}
 				}
@@ -205,7 +250,7 @@ namespace System.Net
 
 			public bool TrySetBusy ()
 			{
-				lock (Group.SyncRoot) {
+				lock (ServicePoint.SyncRoot) {
 					if (busy)
 						return false;
 					busy = true;
@@ -216,7 +261,7 @@ namespace System.Net
 
 			public void SetIdle ()
 			{
-				lock (Group.SyncRoot) {
+				lock (ServicePoint.SyncRoot) {
 					busy = false;
 					idleSince = DateTime.UtcNow;
 				}
