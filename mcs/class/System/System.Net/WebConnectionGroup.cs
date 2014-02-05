@@ -57,14 +57,7 @@ namespace System.Net
 			queue = new Queue ();
 		}
 
-		public event EventHandler ConnectionCreated;
 		public event EventHandler ConnectionClosed;
-
-		void OnConnectionCreated ()
-		{
-			if (ConnectionCreated != null)
-				ConnectionCreated (this, null);
-		}
 
 		void OnConnectionClosed ()
 		{
@@ -88,10 +81,10 @@ namespace System.Net
 			}
 		}
 
-		public WebConnection GetConnection (HttpWebRequest request)
+		public WebConnection GetConnection (HttpWebRequest request, out bool created)
 		{
 			lock (sPoint.SyncRoot) {
-				return CreateOrReuseConnection (request);
+				return CreateOrReuseConnection (request, out created);
 			}
 		}
 
@@ -130,23 +123,7 @@ namespace System.Net
 			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
 		}
 
-		WebConnection CreateConnection ()
-		{
-			var cnc = new ConnectionState (this);
-			connections.AddFirst (cnc);
-			OnConnectionCreated ();
-			return cnc.Connection;
-		}
-
-		WebConnection ReuseOldestConnection ()
-		{
-			var cnc = connections.Last.Value;
-			connections.Remove (cnc);
-			connections.AddFirst (cnc);
-			return cnc.Connection;
-		}
-
-		WebConnection FindIdleConnection ()
+		ConnectionState FindIdleConnection ()
 		{
 			foreach (var cnc in connections) {
 				if (cnc.Busy  || cnc.Connection == null)
@@ -154,29 +131,38 @@ namespace System.Net
 
 				connections.Remove (cnc);
 				connections.AddFirst (cnc);
-				return cnc.Connection;
+				return cnc;
 			}
 
 			return null;
 		}
 
-		WebConnection CreateOrReuseConnection (HttpWebRequest request)
+		WebConnection CreateOrReuseConnection (HttpWebRequest request, out bool created)
 		{
 			var cnc = FindIdleConnection ();
 			Debug ("WCG CREATE OR REUSE: {0}", cnc != null);
 			if (cnc != null) {
-				PrepareSharingNtlm (cnc, request);
-				return cnc;
+				created = false;
+				PrepareSharingNtlm (cnc.Connection, request);
+				return cnc.Connection;
 			}
 
 			Debug ("WCG CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, connections.Count);
 
-			if (sPoint.ConnectionLimit > connections.Count)
-				return CreateConnection ();
+			if (sPoint.ConnectionLimit > connections.Count) {
+				created = true;
+				cnc = new ConnectionState (this);
+				connections.AddFirst (cnc);
+				return cnc.Connection;
+			}
 
 			Debug ("WCG CREATE OR REUSE #3");
 
-			return ReuseOldestConnection ();
+			created = false;
+			cnc = connections.Last.Value;
+			connections.Remove (cnc);
+			connections.AddFirst (cnc);
+			return cnc.Connection;
 		}
 
 		public string Name {

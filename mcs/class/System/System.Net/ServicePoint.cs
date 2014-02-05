@@ -55,7 +55,6 @@ namespace System.Net
 		Dictionary<string,WebConnectionGroup> groups;
 		bool sendContinue = true;
 		bool useConnect;
-		object locker = new object ();
 		object hostE = new object ();
 		bool useNagle;
 		BindIPEndPoint endPointCallback = null;
@@ -78,8 +77,6 @@ namespace System.Net
 			this.maxIdleTime = maxIdleTime;	
 			this.currentConnections = 0;
 			this.idleSince = DateTime.UtcNow;
-
-			idleTimer = new Timer (IdleTimerCallback, null, maxIdleTime, maxIdleTime);
 		}
 		
 		// Properties
@@ -151,8 +148,9 @@ namespace System.Net
 					throw new ArgumentOutOfRangeException ();
 
 				lock (SyncRoot) {
-					maxIdleTime = value; 
-					idleTimer.Change (maxIdleTime, maxIdleTime);
+					maxIdleTime = value;
+					if (idleTimer != null)
+						idleTimer.Change (maxIdleTime, maxIdleTime);
 				}
 			}
 		}
@@ -267,6 +265,10 @@ namespace System.Net
 				}
 				Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
 				outIdleSince = idleSince;
+				if (groups.Count == 0) {
+					idleTimer.Dispose ();
+					idleTimer = null;
+				}
 				return groups.Count == 0;
 			}
 		}
@@ -275,11 +277,6 @@ namespace System.Net
 		{
 			DateTime dummy;
 			CheckAvailableForRecycling (out dummy);
-		}
-
-		internal void OnConnectionStateChanged (IWebConnectionState state, bool idle)
-		{
-			Debug ("ON STATE CHANGED: {0} {1}", state, idle);
 		}
 
 		internal IPHostEntry HostEntry
@@ -339,7 +336,6 @@ namespace System.Net
 				return group;
 
 			group = new WebConnectionGroup (this, name);
-			group.ConnectionCreated += (s, e) => currentConnections++;
 			group.ConnectionClosed += (s, e) => currentConnections--;
 			groups.Add (name, group);
 			return group;
@@ -350,8 +346,14 @@ namespace System.Net
 			WebConnection cnc;
 			
 			lock (SyncRoot) {
+				bool created;
 				WebConnectionGroup cncGroup = GetConnectionGroup (groupName);
-				cnc = cncGroup.GetConnection (request);
+				cnc = cncGroup.GetConnection (request, out created);
+				if (created) {
+					++currentConnections;
+					if (idleTimer == null)
+						idleTimer = new Timer (IdleTimerCallback, null, maxIdleTime, maxIdleTime);
+				}
 			}
 			
 			return cnc.SendRequest (request);

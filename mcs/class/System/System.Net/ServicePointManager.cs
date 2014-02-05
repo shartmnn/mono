@@ -388,7 +388,7 @@ namespace System.Net
 		
 		// Internal Methods
 
-		internal static void RecycleServicePoints ()
+		static void RecycleServicePoints ()
 		{
 			lock (servicePoints) {
 				var toRemove = new ArrayList ();
