@@ -256,6 +256,10 @@ namespace System.Net
 			lock (SyncRoot) {
 				Debug ("IDLE TIMER");
 				idleSince = DateTime.MinValue;
+				if (groups == null) {
+					outIdleSince = idleSince;
+					return true;
+				}
 				var keys = new List<string> (groups.Keys);
 				foreach (var name in keys) {
 					var group = groups [name];
