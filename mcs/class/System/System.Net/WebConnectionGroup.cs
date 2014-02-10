@@ -203,7 +203,7 @@ namespace System.Net
 
 					sPoint.Debug ("CHECK IDLE: {0}", DateTime.UtcNow - cnc.IdleSince);
 
-					if (count < sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
+					if (count <= sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
 						if (cnc.IdleSince > idleSince)
 							idleSince = cnc.IdleSince;
 						continue;
