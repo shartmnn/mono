@@ -253,72 +253,47 @@ namespace System.Net
 
 		internal bool CheckAvailableForRecycling (out DateTime outIdleSince)
 		{
+			Debug ("IDLE TIMER");
+
+			outIdleSince = DateTime.MinValue;
+			List<WebConnectionGroup> groupList, removeList = null;
 			lock (SyncRoot) {
-				Debug ("CHECK AVAILABLE FOR RECYCLING");
 				if (groups == null) {
-					outIdleSince = DateTime.MinValue;
+					idleSince = DateTime.MinValue;
 					return true;
 				}
-
-				/*
-				 * Attempt to close any idle connections.
-				 */
-				OnIdleTimer (null);
-				Debug ("CHECK AVAILABLE FOR RECYCLING #1: {0} {1}", groups.Count, idleSince);
-				outIdleSince = idleSince;
-				return groups.Count == 0;
+				groupList = new List<WebConnectionGroup> (groups.Values);
 			}
-		}
 
-		/*
-		 * Always called while holding the SyncRoot.
-		 * 
-		 * If 'postLockActions != null', then our caller wants to release that lock prior to calling
-		 * WebConnection.Close().
-		 */
-		void OnIdleTimer (List<Action> postLockActions)
-		{
-			Debug ("IDLE TIMER");
-			idleSince = DateTime.MinValue;
-			var keys = new List<string> (groups.Keys);
-			foreach (var name in keys) {
-				var group = groups [name];
-				if (group.OnIdleTimer (TimeSpan.FromMilliseconds (maxIdleTime), postLockActions, ref idleSince))
+			foreach (var group in groupList) {
+				if (!group.TryRecycle (TimeSpan.FromMilliseconds (maxIdleTime), ref outIdleSince))
 					continue;
-				groups.Remove (name);
+				if (removeList == null)
+					removeList = new List<WebConnectionGroup> ();
+				removeList.Add (group);
 			}
-			Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
-			if (groups.Count == 0) {
-				idleTimer.Dispose ();
-				idleTimer = null;
+
+			lock (SyncRoot) {
+				idleSince = outIdleSince;
+				if (removeList != null) {
+					foreach (var group in removeList)
+						groups.Remove (group.Name);
+				}
+
+				Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+				if (groups.Count == 0) {
+					idleTimer.Dispose ();
+					idleTimer = null;
+				}
+
+				return groups.Count == 0;
 			}
 		}
 
 		void IdleTimerCallback (object obj)
 		{
-		again:
-			/*
-			 * First, check whether there are any idle connections that could be closed.
-			 */
-			var postLockActions = new List<Action> ();
-			lock (SyncRoot) {
-				OnIdleTimer (postLockActions);
-			}
-
-			/*
-			 * If WebConnectionGroup found any connections that could be closed, then we release
-			 * the SyncRoot lock and call it back to actually close them.
-			 */
-
-			foreach (var action in postLockActions)
-				action ();
-
-			/*
-			 * Let WebConnectinoGroup do some cleanups while holding the lock again.
-			 */
-
-			if (postLockActions.Count > 0)
-				goto again;
+			DateTime dummy;
+			CheckAvailableForRecycling (out dummy);
 		}
 
 		internal IPHostEntry HostEntry

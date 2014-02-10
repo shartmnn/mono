@@ -31,6 +31,7 @@
 
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Collections;
 using System.Collections.Generic;
 using System.Net.Configuration;
@@ -175,63 +176,66 @@ namespace System.Net
 			get { return queue; }
 		}
 
-		/*
-		 * We are always called while holding the ServicePoint.SyncRoot lock.
-		 * 
-		 * When 'postLockActions != null', then our caller wants to release that lock before we
-		 * call WebConnection.Close().
-		 */
-		internal bool OnIdleTimer (TimeSpan maxIdleTime, List<Action> postLockActions, ref DateTime idleSince)
+		internal bool TryRecycle (TimeSpan maxIdleTime, ref DateTime idleSince)
 		{
-			if (closing) {
-				idleSince = DateTime.MinValue;
-				return false;
-			}
+		again:
+			bool recycled;
+			List<WebConnection> connectionsToClose = null;
 
-			int count = 0;
-			var list = new List<ConnectionState> (connections);
-			foreach (var cnc in list) {
-				if (cnc.Connection == null) {
-					connections.Remove (cnc);
-					OnConnectionClosed ();
-					continue;
+			lock (sPoint.SyncRoot) {
+				if (closing) {
+					idleSince = DateTime.MinValue;
+					return true;
 				}
 
-				++count;
-				if (cnc.Busy)
-					continue;
+				int count = 0;
+				var list = new List<ConnectionState> (connections);
+				foreach (var cnc in list) {
+					if (cnc.Connection == null) {
+						connections.Remove (cnc);
+						OnConnectionClosed ();
+						continue;
+					}
 
-				sPoint.Debug ("CHECK IDLE: {0}", DateTime.UtcNow - cnc.IdleSince);
+					++count;
+					if (cnc.Busy)
+						continue;
 
-				if (count < sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
-					if (cnc.IdleSince > idleSince)
-						idleSince = cnc.IdleSince;
-					continue;
-				}
+					sPoint.Debug ("CHECK IDLE: {0}", DateTime.UtcNow - cnc.IdleSince);
 
-				sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
+					if (count < sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
+						if (cnc.IdleSince > idleSince)
+							idleSince = cnc.IdleSince;
+						continue;
+					}
 
-				if (postLockActions != null) {
+					sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
+
 					/*
-					 * We are called from the timer thread and must not call WebConnection.Close() here.
-					 * The callback will be executed after our caller released the lock.
+					 * Do not call WebConnection.Close() while holding the ServicePoint.SyncRoot lock
+					 * as this could deadlock when attempting to take the WebConnection lock.
+					 * 
 					 */
-					var savedConn = cnc.Connection;
+
+					if (connectionsToClose == null)
+						connectionsToClose = new List<WebConnection> ();
+					connectionsToClose.Add (cnc.Connection);
 					cnc.Connection = null;
-					postLockActions.Add (() => savedConn.Close (false));
-				} else {
-					/*
-					 * We're called from a user request, such as ServicePointManager.FindServicePoint()
-					 * and our caller wishes us to close the connection, if possible.
-					 */
-					cnc.Connection.Close (false);
-					connections.Remove (cnc);
-					OnConnectionClosed ();
 				}
+
+				recycled = connections.Count == 0;
 			}
 
-			sPoint.Debug ("ON IDLE TIMER: {0} {1}", connections.Count, idleSince);
-			return connections.Count > 0;
+			// Did we find anything that can be closed?
+			if (connectionsToClose == null)
+				return recycled;
+
+			// Ok, let's get rid of these!
+			foreach (var cnc in connectionsToClose)
+				cnc.Close (false);
+
+			// Re-take the lock, then remove them fromt he connection list.
+			goto again;
 		}
 
 		class ConnectionState : IWebConnectionState {
