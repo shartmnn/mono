@@ -254,29 +254,66 @@ namespace System.Net
 		internal bool CheckAvailableForRecycling (out DateTime outIdleSince)
 		{
 			lock (SyncRoot) {
-				Debug ("IDLE TIMER");
-				idleSince = DateTime.MinValue;
-				var keys = new List<string> (groups.Keys);
-				foreach (var name in keys) {
-					var group = groups [name];
-					if (group.OnIdleTimer (TimeSpan.FromMilliseconds (maxIdleTime), ref idleSince))
-						continue;
-					groups.Remove (name);
-				}
-				Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+				Debug ("CHECK AVAILABLE FOR RECYCLING");
+				/*
+				 * Attempt to close any idle connections.
+				 */
+				OnIdleTimer (null);
+				Debug ("CHECK AVAILABLE FOR RECYCLING #1: {0} {1}", groups.Count, idleSince);
 				outIdleSince = idleSince;
-				if (groups.Count == 0) {
-					idleTimer.Dispose ();
-					idleTimer = null;
-				}
 				return groups.Count == 0;
+			}
+		}
+
+		/*
+		 * Always called while holding the SyncRoot.
+		 * 
+		 * If 'postLockActions != null', then our caller wants to release that lock prior to calling
+		 * WebConnection.Close().
+		 */
+		void OnIdleTimer (List<Action> postLockActions)
+		{
+			Debug ("IDLE TIMER");
+			idleSince = DateTime.MinValue;
+			var keys = new List<string> (groups.Keys);
+			foreach (var name in keys) {
+				var group = groups [name];
+				if (group.OnIdleTimer (TimeSpan.FromMilliseconds (maxIdleTime), postLockActions, ref idleSince))
+					continue;
+				groups.Remove (name);
+			}
+			Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+			if (groups.Count == 0) {
+				idleTimer.Dispose ();
+				idleTimer = null;
 			}
 		}
 
 		void IdleTimerCallback (object obj)
 		{
-			DateTime dummy;
-			CheckAvailableForRecycling (out dummy);
+		again:
+			/*
+			 * First, check whether there are any idle connections that could be closed.
+			 */
+			var postLockActions = new List<Action> ();
+			lock (SyncRoot) {
+				OnIdleTimer (postLockActions);
+			}
+
+			/*
+			 * If WebConnectionGroup found any connections that could be closed, then we release
+			 * the SyncRoot lock and call it back to actually close them.
+			 */
+
+			foreach (var action in postLockActions)
+				action ();
+
+			/*
+			 * Let WebConnectinoGroup do some cleanups while holding the lock again.
+			 */
+
+			if (postLockActions.Count > 0)
+				goto again;
 		}
 
 		internal IPHostEntry HostEntry

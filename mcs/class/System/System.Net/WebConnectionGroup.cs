@@ -45,6 +45,7 @@ namespace System.Net
 		string name;
 		LinkedList<ConnectionState> connections;
 		Queue queue;
+		bool closing;
 
 		static int next_id;
 		int id = ++next_id;
@@ -70,6 +71,7 @@ namespace System.Net
 			//TODO: what do we do with the queue? Empty it out and abort the requests?
 			//TODO: abort requests or wait for them to finish
 			lock (sPoint.SyncRoot) {
+				closing = true;
 				foreach (var cnc in connections) {
 					if (cnc.Connection == null)
 						continue;
@@ -173,12 +175,24 @@ namespace System.Net
 			get { return queue; }
 		}
 
-		internal bool OnIdleTimer (TimeSpan maxIdleTime, ref DateTime idleSince)
+		/*
+		 * We are always called while holding the ServicePoint.SyncRoot lock.
+		 * 
+		 * When 'postLockActions != null', then our caller wants to release that lock before we
+		 * call WebConnection.Close().
+		 */
+		internal bool OnIdleTimer (TimeSpan maxIdleTime, List<Action> postLockActions, ref DateTime idleSince)
 		{
+			if (closing) {
+				idleSince = DateTime.MinValue;
+				return false;
+			}
+
 			var list = new List<ConnectionState> (connections);
 			foreach (var cnc in list) {
 				if (cnc.Connection == null) {
 					connections.Remove (cnc);
+					OnConnectionClosed ();
 					continue;
 				}
 
@@ -194,9 +208,24 @@ namespace System.Net
 				}
 
 				sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
-				cnc.Connection.Close (false);
-				connections.Remove (cnc);
-				OnConnectionClosed ();
+
+				if (postLockActions != null) {
+					/*
+					 * We are called from the timer thread and must not call WebConnection.Close() here.
+					 * The callback will be executed after our caller released the lock.
+					 */
+					var savedConn = cnc.Connection;
+					cnc.Connection = null;
+					postLockActions.Add (() => savedConn.Close (false));
+				} else {
+					/*
+					 * We're called from a user request, such as ServicePointManager.FindServicePoint()
+					 * and our caller wishes us to close the connection, if possible.
+					 */
+					cnc.Connection.Close (false);
+					connections.Remove (cnc);
+					OnConnectionClosed ();
+				}
 			}
 
 			sPoint.Debug ("ON IDLE TIMER: {0} {1}", connections.Count, idleSince);
