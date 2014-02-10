@@ -188,6 +188,7 @@ namespace System.Net
 				return false;
 			}
 
+			int count = 0;
 			var list = new List<ConnectionState> (connections);
 			foreach (var cnc in list) {
 				if (cnc.Connection == null) {
@@ -196,12 +197,13 @@ namespace System.Net
 					continue;
 				}
 
+				++count;
 				if (cnc.Busy)
 					continue;
 
 				sPoint.Debug ("CHECK IDLE: {0}", DateTime.UtcNow - cnc.IdleSince);
 
-				if (DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
+				if (count < sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
 					if (cnc.IdleSince > idleSince)
 						idleSince = cnc.IdleSince;
 					continue;

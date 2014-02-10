@@ -255,6 +255,11 @@ namespace System.Net
 		{
 			lock (SyncRoot) {
 				Debug ("CHECK AVAILABLE FOR RECYCLING");
+				if (groups == null) {
+					outIdleSince = DateTime.MinValue;
+					return true;
+				}
+
 				/*
 				 * Attempt to close any idle connections.
 				 */
