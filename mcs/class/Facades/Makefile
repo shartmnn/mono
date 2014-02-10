@@ -11,9 +11,15 @@ monotouch_SUBDIRS = System.Collections.Concurrent System.Collections System.Comp
 	System.ServiceModel.Primitives System.Text.Encoding.Extensions System.Text.Encoding System.Text.RegularExpressions System.Threading.Tasks.Parallel \
 	System.Threading.Tasks System.Threading System.Xml.ReaderWriter System.Xml.XDocument System.Xml.XmlSerializer
 
+mobile_static_SUBDIRS = $(monotouch_SUBDIRS)
+
 net_4_5_SUBDIRS = $(monotouch_SUBDIRS) System.Reflection.Emit.ILGeneration System.Reflection.Emit.Lightweight System.Reflection.Emit
 
 monodroid_SUBDIRS = $(net_4_5_SUBDIRS)
+
+xammac_SUBDIRS = $(net_4_5_SUBDIRS)
+
+SUBDIRS = $(net_4_5_SUBDIRS)
 
 include $(MCS_BUILD_DIR)/rules.make
 

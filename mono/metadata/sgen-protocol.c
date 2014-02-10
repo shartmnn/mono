@@ -27,6 +27,7 @@
 #include "sgen-protocol.h"
 #include "sgen-memory-governor.h"
 #include "utils/mono-mmap.h"
+#include "utils/mono-threads.h"
 
 #ifdef SGEN_BINARY_PROTOCOL
 
@@ -107,13 +108,8 @@ unlock_recursive (void)
 }
 
 static void
-binary_protocol_flush_buffers_rec (BinaryProtocolBuffer *buffer)
+binary_protocol_flush_buffer (BinaryProtocolBuffer *buffer)
 {
-	if (!buffer)
-		return;
-
-	binary_protocol_flush_buffers_rec (buffer->next);
-
 	g_assert (buffer->index > 0);
 	fwrite (buffer->buffer, 1, buffer->index, binary_protocol_file);
 
@@ -123,14 +119,29 @@ binary_protocol_flush_buffers_rec (BinaryProtocolBuffer *buffer)
 void
 binary_protocol_flush_buffers (gboolean force)
 {
+	int num_buffers = 0, i;
+	BinaryProtocolBuffer *buf;
+	BinaryProtocolBuffer **bufs;
+
 	if (!binary_protocol_file)
 		return;
 
 	if (!force && !try_lock_exclusive ())
 		return;
 
-	binary_protocol_flush_buffers_rec (binary_protocol_buffers);
+	for (buf = binary_protocol_buffers; buf != NULL; buf = buf->next)
+		++num_buffers;
+	bufs = sgen_alloc_internal_dynamic (num_buffers * sizeof (BinaryProtocolBuffer*), INTERNAL_MEM_BINARY_PROTOCOL, TRUE);
+	for (buf = binary_protocol_buffers, i = 0; buf != NULL; buf = buf->next, i++)
+		bufs [i] = buf;
+	SGEN_ASSERT (0, i == num_buffers, "Binary protocol buffer count error");
+
 	binary_protocol_buffers = NULL;
+
+	for (i = num_buffers - 1; i >= 0; --i)
+		binary_protocol_flush_buffer (bufs [i]);
+
+	sgen_free_internal_dynamic (buf, num_buffers * sizeof (BinaryProtocolBuffer*), INTERNAL_MEM_BINARY_PROTOCOL);
 
 	if (!force)
 		unlock_exclusive ();
@@ -169,6 +180,9 @@ protocol_entry (unsigned char type, gpointer data, int size)
 
 	if (!binary_protocol_file)
 		return;
+
+	if (sgen_is_worker_thread (mono_native_thread_id_get ()))
+		type |= 0x80;
 
 	lock_recursive ();
 

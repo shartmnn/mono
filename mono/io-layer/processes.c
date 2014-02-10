@@ -76,6 +76,7 @@
 #include <mono/utils/mono-time.h>
 #include <mono/utils/mono-membar.h>
 #include <mono/utils/mono-mutex.h>
+#include <mono/utils/mono-signal-handler.h>
 
 /* The process' environment strings */
 #if defined(__APPLE__) && !defined (__arm__)
@@ -329,10 +330,7 @@ gboolean ShellExecuteEx (WapiShellExecuteInfo *sei)
 			return FALSE;
 
 #ifdef PLATFORM_MACOSX
-		if (is_macos_10_5_or_higher ())
-			handler = g_strdup ("/usr/bin/open -W");
-		else
-			handler = g_strdup ("/usr/bin/open");
+		handler = g_strdup ("/usr/bin/open");
 #else
 		/*
 		 * On Linux, try: xdg-open, the FreeDesktop standard way of doing it,
@@ -382,6 +380,9 @@ gboolean ShellExecuteEx (WapiShellExecuteInfo *sei)
 				SetLastError (ERROR_INVALID_DATA);
 			return FALSE;
 		}
+		/* Shell exec should not return a process handle when it spawned a GUI thing, like a browser. */
+		CloseHandle (process_info.hProcess);
+		process_info.hProcess = NULL;
 	}
 	
 	if (sei->fMask & SEE_MASK_NOCLOSEPROCESS) {
@@ -1386,8 +1387,10 @@ gboolean EnumProcesses (guint32 *pids, guint32 len, guint32 *needed)
 
 			if (err == 0) 
 				done = TRUE;
-			else
+			else {
 				free (result);
+				result = NULL;
+			}
 		}
 	} while (err == 0 && !done);
 	
@@ -1710,14 +1713,13 @@ static GSList *load_modules (void)
 		const struct section *sec;
 #endif
 		const char *name;
-		intptr_t slide;
 
-		slide = _dyld_get_image_vmaddr_slide (i);
 		name = _dyld_get_image_name (i);
-		hdr = _dyld_get_image_header (i);
 #if SIZEOF_VOID_P == 8
+		hdr = (const struct mach_header_64*)_dyld_get_image_header (i);
 		sec = getsectbynamefromheader_64 (hdr, SEG_DATA, SECT_DATA);
 #else
+		hdr = _dyld_get_image_header (i);
 		sec = getsectbynamefromheader (hdr, SEG_DATA, SECT_DATA);
 #endif
 
@@ -2118,9 +2120,11 @@ static gchar *get_process_name_from_proc (pid_t pid)
 	size_t size;
 	struct kinfo_proc2 *pi;
 #elif defined(PLATFORM_MACOSX)
+#if !(!defined (__mono_ppc__) && defined (TARGET_OSX))
 	size_t size;
 	struct kinfo_proc *pi;
 	int mib[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+#endif
 #else
 	FILE *fp;
 	gchar *filename = NULL;
@@ -2828,8 +2832,7 @@ process_close (gpointer handle, gpointer data)
 }
 
 #if HAVE_SIGACTION
-static void
-mono_sigchld_signal_handler (int _dummy, siginfo_t *info, void *context)
+MONO_SIGNAL_HANDLER_FUNC (static, mono_sigchld_signal_handler, (int _dummy, siginfo_t *info, void *context))
 {
 	int status;
 	int pid;
@@ -2870,6 +2873,7 @@ mono_sigchld_signal_handler (int _dummy, siginfo_t *info, void *context)
 	fprintf (stdout, "SIG CHILD handler: done looping.");
 #endif
 }
+
 #endif
 
 static void process_add_sigchld_handler (void)

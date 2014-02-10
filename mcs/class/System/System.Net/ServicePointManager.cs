@@ -334,9 +334,8 @@ namespace System.Net
 			if (address == null)
 				throw new ArgumentNullException ("address");
 
-			Debug ("FIND SERVICE POINT: {0}", address);
-
-			RecycleServicePoints ();
+			if ((servicePoints.Count % 4) == 0)
+				RecycleServicePoints ();
 
 			var origAddress = new Uri (address.Scheme + "://" + address.Authority);
 			
@@ -356,8 +355,8 @@ namespace System.Net
 			address = new Uri (address.Scheme + "://" + address.Authority);
 			
 			ServicePoint sp = null;
+			SPKey key = new SPKey (origAddress, usesProxy ? address : null, useConnect);
 			lock (servicePoints) {
-				SPKey key = new SPKey (origAddress, usesProxy ? address : null, useConnect);
 				sp = servicePoints [key] as ServicePoint;
 				Debug ("FIND SERVICE POINT #1: {0} {1} {2}", key, servicePoints.Count, sp != null);
 				if (sp != null)

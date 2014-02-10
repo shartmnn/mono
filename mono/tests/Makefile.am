@@ -21,7 +21,10 @@ MKBUNDLE = \
 	PKG_CONFIG_PATH=$(top_builddir):$(PKG_CONFIG_PATH) \
 	$(RUNTIME) $(mcs_topdir)/class/lib/net_4_5/mkbundle.exe
 
-MCS = $(RUNTIME) $(mcs_topdir)/class/lib/build/mcs.exe -unsafe -nowarn:0162 -nowarn:0168 -nowarn:0219 -debug
+MCS = $(RUNTIME) $(mcs_topdir)/class/lib/build/mcs.exe -unsafe -debug \
+	-nowarn:0162 -nowarn:0168 -nowarn:0219 -nowarn:0414 -nowarn:0618 \
+	-nowarn:0169 -nowarn:1690 -nowarn:0649 -nowarn:0612 -nowarn:3021 \
+	-nowarn:0197
 ILASM = $(RUNTIME) $(mcs_topdir)/class/lib/net_4_5/ilasm.exe
 
 BENCHSRC=fib.cs random.cs nested-loops.cs ackermann.cs tight-loop.cs sieve.cs
@@ -389,7 +392,8 @@ BASE_TEST_CS_SRC=		\
 	allow-synchronous-major.cs	\
 	unload-appdomain-on-shutdown.cs	\
 	block_guard_restore_aligment_on_exit.cs	\
-	finally_block_ending_in_dead_bb.cs
+	finally_block_ending_in_dead_bb.cs	\
+	thread_static_gc_layout.cs
 
 TEST_CS_SRC_DIST=	\
 	$(BASE_TEST_CS_SRC)	\
@@ -802,7 +806,9 @@ runtest: $(TESTSI_CS) $(TESTSI_IL) $(TESTBS) libtest.la $(PREREQSI_IL) $(PREREQS
 	@failed=0; \
 	passed=0; \
 	failed_tests="";\
-	for i in $(TESTSI_CS) $(TESTBS) $(TESTSI_IL); do	\
+	rm -f testlist testlist.sorted; \
+	for i in $(TESTSI_CS) $(TESTBS) $(TESTSI_IL); do echo $${i} >> testlist; sort testlist > testlist.sorted; done; \
+	for i in `cat testlist.sorted`; do \
 		rm -f $${i}.so; \
 		if [ x$(AOT) = x1 ]; then if echo $(AOT_DISABLED_TESTS) | grep -v -q $${i}; then $(with_mono_path) $(JITTEST_PROG_RUN) --aot --debug $${i} > $${i}.aotlog 2>&1 || exit 1; fi; fi; \
 		if $(srcdir)/test-driver '$(with_mono_path) $(JITTEST_PROG_RUN)' $$i '$(DISABLED_TESTS)' 'no-dump' $(RUNTIME_ARGS); \
@@ -815,6 +821,7 @@ runtest: $(TESTSI_CS) $(TESTSI_IL) $(TESTBS) libtest.la $(PREREQSI_IL) $(PREREQS
 		fi \
 	done; \
 	echo "$${passed} test(s) passed. $${failed} test(s) did not pass."; \
+	rm -f testlist testlist.sorted; \
 	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
 	  for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
 
@@ -883,7 +890,7 @@ debug-casts:
 	@$(MCS) -r:TestDriver.dll $(srcdir)/debug-casts.cs
 	@$(RUNTIME) --debug=casts debug-casts.exe
 
-EXTRA_DIST += sgen-bridge.cs sgen-descriptors.cs sgen-gshared-vtype.cs sgen-bridge-major-fragmentation.cs sgen-domain-unload.cs sgen-weakref-stress.cs sgen-cementing-stress.cs sgen-case-23400.cs 	finalizer-wait.cs critical-finalizers.cs sgen-domain-unload-2.cs sgen-suspend.cs
+EXTRA_DIST += sgen-bridge.cs sgen-descriptors.cs sgen-gshared-vtype.cs sgen-bridge-major-fragmentation.cs sgen-domain-unload.cs sgen-weakref-stress.cs sgen-cementing-stress.cs sgen-case-23400.cs 	finalizer-wait.cs critical-finalizers.cs sgen-domain-unload-2.cs sgen-suspend.cs sgen-new-threads-dont-join-stw.cs sgen-bridge-xref.cs
 
 
 #those are actually configurations, eg plain_sgen-descriptors.exe
@@ -897,7 +904,8 @@ SGEN_TESTS =	\
 	sgen-domain-unload.exe	\
 	sgen-weakref-stress.exe	\
 	sgen-cementing-stress.exe	\
-	sgen-case-23400.exe
+	sgen-case-23400.exe	\
+	sgen-new-threads-dont-join-stw.exe
 
 SGEN_CONFIGURATIONS =	\
 	"|plain"	\
@@ -937,7 +945,7 @@ sgen-regular-tests: $(SGEN_TESTS)
 	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
 	  for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
 
-sgen-bridge-tests: sgen-bridge.exe sgen-bridge-major-fragmentation.exe
+sgen-bridge-tests1: sgen-bridge.exe sgen-bridge-major-fragmentation.exe
 	@failed=0; \
 	passed=0; \
 	failed_tests="";\
@@ -961,7 +969,72 @@ sgen-bridge-tests: sgen-bridge.exe sgen-bridge-major-fragmentation.exe
 	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
 	  for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
 
+sgen-bridge-tests2: sgen-bridge-xref.exe
+	@failed=0; \
+	passed=0; \
+	failed_tests="";\
+	for test in $+; do	\
+		echo "...$$test";	\
+		for conf in $(SGEN_BRIDGE_CONFIGURATIONS); do 	\
+			name=`echo $$conf | cut -d\| -f 2`;	\
+			params=`echo $$conf | cut -d\| -f 1`;	\
+			test_name="$${test}|$${name}";	\
+			if MONO_GC_PARAMS="bridge=2Bridge$${params}" MONO_ENV_OPTIONS="--gc=sgen" $(srcdir)/test-driver '$(with_mono_path) $(JITTEST_PROG_RUN)' $$test_name "$(DISABLED_TESTS_SGEN)" 'dump-output' $(RUNTIME_ARGS);	\
+			then \
+				passed=`expr $${passed} + 1`; \
+			else \
+				if [ $$? = 2 ]; then break; fi; \
+				failed=`expr $${failed} + 1`; \
+				failed_tests="$${failed_tests} $$test_name"; \
+			fi \
+		done	\
+	done;	\
+	echo "$${passed} test(s) passed. $${failed} test(s) did not pass."; \
+	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
+	  for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
+
+
+sgen-bridge-tests: sgen-bridge-tests1 sgen-bridge-tests2
+
 sgen-tests: sgen-regular-tests sgen-bridge-tests
+
+AOT_CONFIGURATIONS=	\
+	"|regular"	\
+	"--gc=boehm|boehm"
+
+#LLVM crashes, got to fix it first.
+#	"--llvm|llvm"	\
+#	"--llvm --gc=boehm|llvm+boehm"
+
+
+test-aot:
+	@failed=0; \
+	passed=0; \
+	failed_tests="";\
+	profile=net_4_5;	\
+	tmpfile=`mktemp -t mono_aot_output` || exit 1;	\
+	rm -f test-aot-$${name}.stdout test-aot-$${name}.stderr; \
+	for assembly in $(mcs_topdir)/class/lib/$$profile/*.dll	; do	\
+		asm_name=`basename $$assembly`;	\
+		echo "... $$asm_name";	\
+		for conf in $(AOT_CONFIGURATIONS); do	\
+			name=`echo $$conf | cut -d\| -f 2`;	\
+			params=`echo $$conf | cut -d\| -f 1`;	\
+			test_name="$${asm_name}|$${name}";	\
+			echo "  $$test_name";	\
+			if MONO_PATH=$(mcs_topdir)/class/lib/$$profile $(JITTEST_PROG_RUN) $$params --aot=outfile=$$tmpfile $$assembly >> test-aot-$${name}.stdout 2>> test-aot-$${name}.stderr;	\
+			then \
+				passed=`expr $${passed} + 1`; \
+			else \
+				failed=`expr $${failed} + 1`; \
+				failed_tests="$${failed_tests} $$test_name"; \
+			fi \
+		done;	\
+	done;	\
+	rm	$$tmpfile;	\
+	echo "$${passed} test(s) passed. $${failed} test(s) did not pass."; \
+	if [ $${failed} != 0 ]; then echo -e "\nFailed tests:\n"; \
+	for i in $${failed_tests}; do echo $${i}; done; exit 1; fi
 
 
 # Generated tests for runtime invoke

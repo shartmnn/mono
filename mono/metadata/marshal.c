@@ -72,11 +72,12 @@ typedef struct _MonoRemotingMethods MonoRemotingMethods;
 /* 
  * This mutex protects the various marshalling related caches in MonoImage
  * and a few other data structures static to this file.
- * Note that when this lock is held it is not possible to take other runtime
- * locks like the loader lock.
+ *
+ * The marshal lock is a non-recursive complex lock that sits below the domain lock in the
+ * runtime locking latice. Which means it can take simple locks suck as the image lock.
  */
-#define mono_marshal_lock() EnterCriticalSection (&marshal_mutex)
-#define mono_marshal_unlock() LeaveCriticalSection (&marshal_mutex)
+#define mono_marshal_lock() mono_locks_acquire (&marshal_mutex, MarshalLock)
+#define mono_marshal_unlock() mono_locks_release (&marshal_mutex, MarshalLock)
 static CRITICAL_SECTION marshal_mutex;
 static gboolean marshal_mutex_initialized;
 
@@ -555,10 +556,13 @@ mono_delegate_free_ftnptr (MonoDelegate *delegate)
 	if (ptr) {
 		uint32_t gchandle;
 		void **method_data;
+		MonoMethod *method;
+
 		ji = mono_jit_info_table_find (mono_domain_get (), mono_get_addr_from_ftnptr (ptr));
 		g_assert (ji);
 
-		method_data = ((MonoMethodWrapper*)ji->method)->method_data;
+		method = mono_jit_info_get_method (ji);
+		method_data = ((MonoMethodWrapper*)method)->method_data;
 
 		/*the target gchandle is the first entry after size and the wrapper itself.*/
 		gchandle = GPOINTER_TO_UINT (method_data [2]);
@@ -566,7 +570,7 @@ mono_delegate_free_ftnptr (MonoDelegate *delegate)
 		if (gchandle)
 			mono_gchandle_free (gchandle);
 
-		mono_runtime_free_method (mono_object_domain (delegate), ji->method);
+		mono_runtime_free_method (mono_object_domain (delegate), method);
 	}
 }
 
@@ -5206,14 +5210,14 @@ mono_marshal_get_runtime_invoke_dynamic (void)
 	mono_mb_emit_byte (mb, CEE_RET);
 #endif /* DISABLE_JIT */
 
-	mono_loader_lock ();
+	mono_marshal_lock ();
 	/* double-checked locking */
 	if (!method) {
 		method = mono_mb_create_method (mb, csig, 16);
 		info = mono_wrapper_info_create (method, WRAPPER_SUBTYPE_RUNTIME_INVOKE_DYNAMIC);
 		mono_marshal_set_wrapper_info (method, info);
 	}
-	mono_loader_unlock ();
+	mono_marshal_unlock ();
 
 	mono_mb_free (mb);
 
@@ -8877,13 +8881,14 @@ mono_marshal_get_native_wrapper (MonoMethod *method, gboolean check_exceptions, 
 		pinvoke = TRUE;
 
 	if (!piinfo->addr) {
-		if (pinvoke)
+		if (pinvoke) {
 			if (method->iflags & METHOD_IMPL_ATTRIBUTE_NATIVE)
 				exc_arg = "Method contains unsupported native code";
-			else
+			else if (!aot)
 				mono_lookup_pinvoke_call (method, &exc_class, &exc_arg);
-		else
+		} else {
 			piinfo->addr = mono_lookup_internal_call (method);
+		}
 	}
 
 	/* hack - redirect certain string constructors to CreateString */
@@ -10458,7 +10463,7 @@ mono_marshal_get_synchronized_wrapper (MonoMethod *method)
 	clause->flags = MONO_EXCEPTION_CLAUSE_FINALLY;
 #endif
 
-	mono_loader_lock ();
+	mono_marshal_lock ();
 
 	if (!enter_method) {
 		MonoMethodDesc *desc;
@@ -10479,7 +10484,7 @@ mono_marshal_get_synchronized_wrapper (MonoMethod *method)
 		mono_method_desc_free (desc);
 	}
 
-	mono_loader_unlock ();
+	mono_marshal_unlock ();
 
 #ifndef DISABLE_JIT
 	/* Push this or the type object */
@@ -11676,7 +11681,7 @@ ves_icall_System_Runtime_InteropServices_Marshal_copy_to_unmanaged (MonoArray *s
 	element_size = mono_array_element_size (src->obj.vtable->klass);
 
 	/* no references should be involved */
-	source_addr = mono_array_addr_with_size (src, element_size, start_index);
+	source_addr = mono_array_addr_with_size_fast (src, element_size, start_index);
 
 	memcpy (dest, source_addr, length * element_size);
 }
@@ -11705,7 +11710,7 @@ ves_icall_System_Runtime_InteropServices_Marshal_copy_from_unmanaged (gpointer s
 	element_size = mono_array_element_size (dest->obj.vtable->klass);
 	  
 	/* no references should be involved */
-	dest_addr = mono_array_addr_with_size (dest, element_size, start_index);
+	dest_addr = mono_array_addr_with_size_fast (dest, element_size, start_index);
 
 	memcpy (dest_addr, src, length * element_size);
 }
@@ -12153,7 +12158,7 @@ ves_icall_System_Runtime_InteropServices_Marshal_ReAllocCoTaskMem (gpointer ptr,
 void*
 ves_icall_System_Runtime_InteropServices_Marshal_UnsafeAddrOfPinnedArrayElement (MonoArray *arrayobj, int index)
 {
-	return mono_array_addr_with_size (arrayobj, mono_array_element_size (arrayobj->obj.vtable->klass), index);
+	return mono_array_addr_with_size_fast (arrayobj, mono_array_element_size (arrayobj->obj.vtable->klass), index);
 }
 
 MonoDelegate*
@@ -12208,12 +12213,8 @@ mono_marshal_load_type_info (MonoClass* klass)
 	if (!klass->inited)
 		mono_class_init (klass);
 
-	mono_loader_lock ();
-
-	if (klass->marshal_info) {
-		mono_loader_unlock ();
+	if (klass->marshal_info)
 		return klass->marshal_info;
-	}
 
 	/*
 	 * This function can recursively call itself, so we keep the list of classes which are
@@ -12289,7 +12290,7 @@ mono_marshal_load_type_info (MonoClass* klass)
 		case TYPE_ATTRIBUTE_EXPLICIT_LAYOUT:
 			size = mono_marshal_type_size (field->type, info->fields [j].mspec, 
 						       &align, TRUE, klass->unicode);
-			min_align = packing;
+			min_align = MAX (align, min_align);
 			info->fields [j].offset = field->offset - sizeof (MonoObject);
 			info->native_size = MAX (info->native_size, info->fields [j].offset + size);
 			break;
@@ -12303,9 +12304,12 @@ mono_marshal_load_type_info (MonoClass* klass)
 		 * If the provided Size is equal or larger than the calculated size, and there
 		 * was no Pack attribute, we set min_align to 1 to avoid native_size being increased
 		 */
-		if (layout == TYPE_ATTRIBUTE_EXPLICIT_LAYOUT)
+		if (layout == TYPE_ATTRIBUTE_EXPLICIT_LAYOUT) {
 			if (native_size && native_size == info->native_size && klass->packing_size == 0)
 				min_align = 1;
+			else
+				min_align = MIN (min_align, packing);
+		}
 	}
 
 	if (info->native_size & (min_align - 1)) {
@@ -12328,12 +12332,13 @@ mono_marshal_load_type_info (MonoClass* klass)
 	loads_list = g_slist_remove (loads_list, klass);
 	mono_native_tls_set_value (load_type_info_tls_id, loads_list);
 
-	/*We do double-checking locking on marshal_info */
-	mono_memory_barrier ();
-
-	klass->marshal_info = info;
-
-	mono_loader_unlock ();
+	mono_marshal_lock ();
+	if (!klass->marshal_info) {
+		/*We do double-checking locking on marshal_info */
+		mono_memory_barrier ();
+		klass->marshal_info = info;
+	}
+	mono_marshal_unlock ();
 
 	return klass->marshal_info;
 }

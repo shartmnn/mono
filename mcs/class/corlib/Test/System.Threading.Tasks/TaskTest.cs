@@ -86,6 +86,24 @@ namespace MonoTests.System.Threading.Tasks
 			}
 		}
 
+		class ExceptionScheduler : TaskScheduler
+		{
+			protected override IEnumerable<Task> GetScheduledTasks ()
+			{
+				throw new ApplicationException ("1");
+			}
+
+			protected override void QueueTask (Task task)
+			{
+				throw new ApplicationException ("2");
+			}
+
+			protected override bool TryExecuteTaskInline (Task task, bool taskWasPreviouslyQueued)
+			{
+				throw new ApplicationException ("3");
+			}
+		}
+
 
 		Task[] tasks;
 		const int max = 6;
@@ -838,6 +856,23 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		public void RunSynchronously_SchedulerException ()
+		{
+			var scheduler = new MockScheduler ();
+			scheduler.TryExecuteTaskInlineHandler += (task, b) => {
+				throw new ApplicationException ();
+			};
+
+			Task t = new Task (() => { });
+			try {
+				t.RunSynchronously (scheduler);
+				Assert.Fail ();
+			} catch (Exception e) {
+				Assert.AreEqual (t.Exception.InnerException, e);
+			}
+		}
+
+		[Test]
 		public void RunSynchronouslyWithAttachedChildren ()
 		{
 			var result = false;
@@ -1070,6 +1105,45 @@ namespace MonoTests.System.Threading.Tasks
 			ar.AsyncWaitHandle.WaitOne ();
 		}
 
+		[Test]
+		public void StartOnBrokenScheduler ()
+		{
+			var t = new Task (delegate { });
+
+			try {
+				t.Start (new ExceptionScheduler ());
+				Assert.Fail ("#1");
+			} catch (TaskSchedulerException e) {
+				Assert.AreEqual (TaskStatus.Faulted, t.Status, "#2");
+				Assert.AreSame (e, t.Exception.InnerException, "#3");
+				Assert.IsTrue (e.InnerException is ApplicationException, "#4");
+			}
+		}
+
+		[Test]
+		public void ContinuationOnBrokenScheduler ()
+		{
+			var s = new ExceptionScheduler ();
+			Task t = new Task(delegate {});
+
+			var t2 = t.ContinueWith (delegate {
+			}, TaskContinuationOptions.ExecuteSynchronously, s);
+
+			var t3 = t.ContinueWith (delegate {
+			}, TaskContinuationOptions.ExecuteSynchronously, s);
+
+			t.Start ();
+
+			try {
+				Assert.IsTrue (t3.Wait (2000), "#0");
+				Assert.Fail ("#1");
+			} catch (AggregateException e) {
+			}
+
+			Assert.AreEqual (TaskStatus.Faulted, t2.Status, "#2");
+			Assert.AreEqual (TaskStatus.Faulted, t3.Status, "#3");
+		}
+
 #if NET_4_5
 		[Test]
 		public void Delay_Invalid ()
@@ -1126,6 +1200,15 @@ namespace MonoTests.System.Threading.Tasks
 		}
 
 		[Test]
+		public void Delay_TimeManagement ()
+		{
+			var delay1 = Task.Delay(50);
+			var delay2 = Task.Delay(25);
+			Assert.IsTrue (Task.WhenAny(new[] { delay1, delay2 }).Wait (1000));
+			Assert.AreEqual (TaskStatus.RanToCompletion, delay2.Status);
+		}
+
+		[Test]
 		public void WaitAny_WithNull ()
 		{
 			var tasks = new [] {
@@ -1138,6 +1221,16 @@ namespace MonoTests.System.Threading.Tasks
 				Assert.Fail ();
 			} catch (ArgumentException) {
 			}
+		}
+
+		[Test]
+		public void WhenAll_Empty ()
+		{
+			var tasks = new Task[0];
+
+			Task t = Task.WhenAll(tasks);
+
+			Assert.IsTrue(t.Wait(1000), "#1");
 		}
 
 		[Test]
@@ -1263,6 +1356,18 @@ namespace MonoTests.System.Threading.Tasks
 			t2.Start ();
 
 			Assert.IsTrue (t.Wait (1000), "#2");
+		}
+
+		[Test]
+		public void WhenAllResult_Empty ()
+		{
+			var tasks = new Task<int>[0];
+
+			Task<int[]> t = Task.WhenAll(tasks);
+
+			Assert.IsTrue(t.Wait(1000), "#1");
+			Assert.IsNotNull(t.Result, "#2");
+			Assert.AreEqual(t.Result.Length, 0, "#3");
 		}
 
 		[Test]

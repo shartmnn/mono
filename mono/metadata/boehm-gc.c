@@ -21,11 +21,14 @@
 #include <mono/metadata/metadata-internals.h>
 #include <mono/metadata/marshal.h>
 #include <mono/metadata/runtime.h>
+#include <mono/utils/atomic.h>
 #include <mono/utils/mono-logger-internal.h>
+#include <mono/utils/mono-memory-model.h>
 #include <mono/utils/mono-time.h>
 #include <mono/utils/mono-threads.h>
 #include <mono/utils/dtrace.h>
 #include <mono/utils/gc_wrapper.h>
+#include <mono/utils/mono-mutex.h>
 
 #if HAVE_BOEHM_GC
 
@@ -46,9 +49,12 @@ void *pthread_get_stackaddr_np(pthread_t);
 #define MIN_BOEHM_MAX_HEAP_SIZE (MIN_BOEHM_MAX_HEAP_SIZE_IN_MB << 20)
 
 static gboolean gc_initialized = FALSE;
+static mono_mutex_t mono_gc_lock;
 
 static void*
 boehm_thread_register (MonoThreadInfo* info, void *baseptr);
+static void
+boehm_thread_unregister (MonoThreadInfo *p);
 
 static void
 mono_gc_warning (char *msg, GC_word arg)
@@ -61,6 +67,7 @@ mono_gc_base_init (void)
 {
 	MonoThreadInfoCallbacks cb;
 	const char *env;
+	int dummy;
 
 	if (gc_initialized)
 		return;
@@ -179,12 +186,17 @@ mono_gc_base_init (void)
 
 	memset (&cb, 0, sizeof (cb));
 	cb.thread_register = boehm_thread_register;
+	cb.thread_unregister = boehm_thread_unregister;
 	cb.mono_method_is_critical = (gpointer)mono_runtime_is_critical_method;
 #ifndef HOST_WIN32
+	cb.thread_exit = mono_gc_pthread_exit;
 	cb.mono_gc_pthread_create = (gpointer)mono_gc_pthread_create;
 #endif
 	
 	mono_threads_init (&cb, sizeof (MonoThreadInfo));
+	mono_mutex_init (&mono_gc_lock);
+
+	mono_thread_info_attach (&dummy);
 
 	mono_gc_enable_events ();
 	gc_initialized = TRUE;
@@ -348,6 +360,16 @@ boehm_thread_register (MonoThreadInfo* info, void *baseptr)
 	return NULL;
 #endif
 #endif
+}
+
+static void
+boehm_thread_unregister (MonoThreadInfo *p)
+{
+	MonoNativeThreadId tid;
+
+	tid = mono_thread_info_get_tid (p);
+
+	mono_threads_add_joinable_thread ((gpointer)tid);
 }
 
 gboolean
@@ -624,6 +646,12 @@ mono_gc_wbarrier_generic_store (gpointer ptr, MonoObject* value)
 }
 
 void
+mono_gc_wbarrier_generic_store_atomic (gpointer ptr, MonoObject *value)
+{
+	InterlockedWritePointer (ptr, value);
+}
+
+void
 mono_gc_wbarrier_generic_nostore (gpointer ptr)
 {
 }
@@ -680,7 +708,7 @@ enum {
 };
 
 static MonoMethod*
-create_allocator (int atype, int offset)
+create_allocator (int atype, int tls_key)
 {
 	int index_var, bytes_var, my_fl_var, my_entry_var;
 	guint32 no_freelist_branch, not_small_enough_branch = 0;
@@ -759,7 +787,7 @@ create_allocator (int atype, int offset)
 	/* my_fl = ((GC_thread)tsd) -> ptrfree_freelists + index; */
 	mono_mb_emit_byte (mb, MONO_CUSTOM_PREFIX);
 	mono_mb_emit_byte (mb, 0x0D); /* CEE_MONO_TLS */
-	mono_mb_emit_i4 (mb, offset);
+	mono_mb_emit_i4 (mb, tls_key);
 	if (atype == ATYPE_FREEPTR || atype == ATYPE_FREEPTR_FOR_BOX || atype == ATYPE_STRING)
 		mono_mb_emit_icon (mb, G_STRUCT_OFFSET (struct GC_Thread_Rep, ptrfree_freelists));
 	else if (atype == ATYPE_NORMAL)
@@ -966,11 +994,22 @@ mono_gc_get_managed_allocator_by_type (int atype)
 	MonoMethod *res;
 	MONO_THREAD_VAR_OFFSET (GC_thread_tls, offset);
 
-	mono_loader_lock ();
+	mono_tls_key_set_offset (TLS_KEY_BOEHM_GC_THREAD, offset);
+
 	res = alloc_method_cache [atype];
-	if (!res)
-		res = alloc_method_cache [atype] = create_allocator (atype, offset);
-	mono_loader_unlock ();
+	if (res)
+		return res;
+
+	res = create_allocator (atype, TLS_KEY_BOEHM_GC_THREAD);
+	mono_mutex_lock (&mono_gc_lock);
+	if (alloc_method_cache [atype]) {
+		mono_free_method (res);
+		res = alloc_method_cache [atype];
+	} else {
+		mono_memory_barrier ();
+		alloc_method_cache [atype] = res;
+	}
+	mono_mutex_unlock (&mono_gc_lock);
 	return res;
 }
 

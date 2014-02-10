@@ -146,6 +146,7 @@ namespace Mono.CSharp {
 		public int VerboseParserFlag;
 		public int FatalCounter;
 		public bool Stacktrace;
+		public bool BreakOnInternalError;
 		#endregion
 
 		public bool ShowFullPaths;
@@ -301,8 +302,8 @@ namespace Mono.CSharp {
 			UnknownOption
 		}
 
-		static readonly char[] argument_value_separator = new char[] { ';', ',' };
-		static readonly char[] numeric_value_separator = new char[] { ';', ',', ' ' };
+		static readonly char[] argument_value_separator = { ';', ',' };
+		static readonly char[] numeric_value_separator = { ';', ',', ' ' };
 
 		readonly TextWriter output;
 		readonly Report report;
@@ -469,7 +470,7 @@ namespace Mono.CSharp {
 				return;
 			}
 
-			string[] files = null;
+			string[] files;
 			try {
 				files = Directory.GetFiles (path, pattern);
 			} catch (System.IO.DirectoryNotFoundException) {
@@ -669,7 +670,8 @@ namespace Mono.CSharp {
 				"   --stacktrace       Shows stack trace at error location\n" +
 				"   --timestamp        Displays time stamps of various compiler events\n" +
 				"   -v                 Verbose parsing (for debugging the parser)\n" +
-				"   --mcs-debug X      Sets MCS debugging level to X\n");
+				"   --mcs-debug X      Sets MCS debugging level to X\n" +
+				"   --break-on-ice     Breaks compilation on internal compiler error");
 		}
 
 		//
@@ -975,7 +977,7 @@ namespace Mono.CSharp {
 					settings.WarningsAreErrors = true;
 					parser_settings.WarningsAreErrors = true;
 				} else {
-					if (!ProcessWarningsList (value, v => settings.AddWarningAsError (v)))
+					if (!ProcessWarningsList (value, settings.AddWarningAsError))
 						return ParseResult.Error;
 				}
 				return ParseResult.Success;
@@ -984,7 +986,7 @@ namespace Mono.CSharp {
 				if (value.Length == 0) {
 					settings.WarningsAreErrors = false;
 				} else {
-					if (!ProcessWarningsList (value, v => settings.AddWarningOnly (v)))
+					if (!ProcessWarningsList (value, settings.AddWarningOnly))
 						return ParseResult.Error;
 				}
 				return ParseResult.Success;
@@ -1005,7 +1007,7 @@ namespace Mono.CSharp {
 					return ParseResult.Error;
 				}
 
-				if (!ProcessWarningsList (value, v => settings.SetIgnoreWarning (v)))
+				if (!ProcessWarningsList (value, settings.SetIgnoreWarning))
 					return ParseResult.Error;
 
 				return ParseResult.Success;
@@ -1419,6 +1421,10 @@ namespace Mono.CSharp {
 
 			case "--metadata-only":
 				settings.WriteMetadataOnly = true;
+				return ParseResult.Success;
+
+			case "--break-on-ice":
+				settings.BreakOnInternalError = true;
 				return ParseResult.Success;
 
 			default:
