@@ -176,7 +176,7 @@ namespace System.Net
 			get { return queue; }
 		}
 
-		internal bool TryRecycle (TimeSpan maxIdleTime, ref DateTime idleSince)
+		internal bool TryRecycle (TimeSpan maxIdleTime, ref DateTime idleSince, bool debug)
 		{
 		again:
 			bool recycled;
@@ -201,7 +201,8 @@ namespace System.Net
 					if (cnc.Busy)
 						continue;
 
-					sPoint.Debug ("CHECK IDLE: {0}", DateTime.UtcNow - cnc.IdleSince);
+					if (debug)
+						sPoint.Debug ("CHECK IDLE: {0} {1} {2}", DateTime.UtcNow - cnc.IdleSince, count, sPoint.ConnectionLimit);
 
 					if (count <= sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
 						if (cnc.IdleSince > idleSince)
@@ -209,7 +210,8 @@ namespace System.Net
 						continue;
 					}
 
-					sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
+					if (debug)
+						sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
 
 					/*
 					 * Do not call WebConnection.Close() while holding the ServicePoint.SyncRoot lock

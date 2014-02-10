@@ -251,9 +251,10 @@ namespace System.Net
 			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
 		}
 
-		internal bool CheckAvailableForRecycling (out DateTime outIdleSince)
+		internal bool CheckAvailableForRecycling (out DateTime outIdleSince, bool debug)
 		{
-			Debug ("IDLE TIMER");
+			if (debug)
+				Debug ("IDLE TIMER");
 
 			outIdleSince = DateTime.MinValue;
 			List<WebConnectionGroup> groupList, removeList = null;
@@ -266,7 +267,7 @@ namespace System.Net
 			}
 
 			foreach (var group in groupList) {
-				if (!group.TryRecycle (TimeSpan.FromMilliseconds (maxIdleTime), ref outIdleSince))
+				if (!group.TryRecycle (TimeSpan.FromMilliseconds (maxIdleTime), ref outIdleSince, debug))
 					continue;
 				if (removeList == null)
 					removeList = new List<WebConnectionGroup> ();
@@ -280,7 +281,9 @@ namespace System.Net
 						groups.Remove (group.Name);
 				}
 
-				Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+				if (debug)
+					Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+
 				if (groups.Count == 0) {
 					idleTimer.Dispose ();
 					idleTimer = null;
@@ -293,7 +296,7 @@ namespace System.Net
 		void IdleTimerCallback (object obj)
 		{
 			DateTime dummy;
-			CheckAvailableForRecycling (out dummy);
+			CheckAvailableForRecycling (out dummy, true);
 		}
 
 		internal IPHostEntry HostEntry
