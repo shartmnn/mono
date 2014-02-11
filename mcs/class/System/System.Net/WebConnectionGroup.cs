@@ -31,7 +31,6 @@
 
 using System;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Collections;
 using System.Collections.Generic;
 using System.Net.Configuration;
@@ -236,7 +235,7 @@ namespace System.Net
 			foreach (var cnc in connectionsToClose)
 				cnc.Close (false);
 
-			// Re-take the lock, then remove them fromt he connection list.
+			// Re-take the lock, then remove them from the connection list.
 			goto again;
 		}
 
