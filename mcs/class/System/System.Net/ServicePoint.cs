@@ -52,6 +52,7 @@ namespace System.Net
 		X509Certificate clientCertificate;
 		IPHostEntry host;
 		bool usesProxy;
+		WebConnectionGroup firstGroup;
 		Dictionary<string,WebConnectionGroup> groups;
 		bool sendContinue = true;
 		bool useConnect;
@@ -66,8 +67,6 @@ namespace System.Net
 		int id = ++next_id;
 		static int next_id;
 
-		internal readonly object SyncRoot = new object ();
-		
 		// Constructors
 
 		internal ServicePoint (Uri uri, int connectionLimit, int maxIdleTime)
@@ -147,7 +146,7 @@ namespace System.Net
 				if (value < Timeout.Infinite || value > Int32.MaxValue)
 					throw new ArgumentOutOfRangeException ();
 
-				lock (SyncRoot) {
+				lock (this) {
 					maxIdleTime = value;
 					if (idleTimer != null)
 						idleTimer.Change (maxIdleTime, maxIdleTime);
@@ -251,52 +250,132 @@ namespace System.Net
 			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
 		}
 
-		internal bool CheckAvailableForRecycling (out DateTime outIdleSince, bool debug)
+		WebConnectionGroup GetConnectionGroup (string name)
 		{
-			if (debug)
-				Debug ("IDLE TIMER");
+			if (name == null)
+				name = "";
 
+			/*
+			 * Optimization:
+			 * 
+			 * In the vast majority of cases, we only have one single WebConnectionGroup per ServicePoint, so we
+			 * don't need to allocate a dictionary.
+			 * 
+			 */
+
+			WebConnectionGroup group;
+			if (firstGroup != null && name == firstGroup.Name)
+				return firstGroup;
+			if (groups != null && groups.TryGetValue (name, out group))
+				return group;
+
+			group = new WebConnectionGroup (this, name);
+			group.ConnectionClosed += (s, e) => currentConnections--;
+
+			if (firstGroup == null)
+				firstGroup = group;
+			else {
+				if (groups == null)
+					groups = new Dictionary<string, WebConnectionGroup> ();
+				groups.Add (name, group);
+			}
+
+			return group;
+		}
+
+		void RemoveConnectionGroup (WebConnectionGroup group)
+		{
+			if (groups == null || groups.Count == 0) {
+				// No more connection groups left.
+				if (group != firstGroup) {
+					// This should never happen.
+					Console.Error.WriteLine ("Attempting to remove unknown WebConnectionGroup '{0}'.", group.Name);
+				} else
+					firstGroup = null;
+				return;
+			}
+
+			if (group == firstGroup) {
+				// Steal one entry from the dictionary.
+				var keys = new string [groups.Count];
+				groups.Keys.CopyTo (keys, 0);
+				firstGroup = groups [keys [0]];
+				groups.Remove (keys [0]);
+			} else {
+				groups.Remove (group.Name);
+			}
+		}
+
+		internal bool CheckAvailableForRecycling (out DateTime outIdleSince)
+		{
 			outIdleSince = DateTime.MinValue;
-			List<WebConnectionGroup> groupList, removeList = null;
-			lock (SyncRoot) {
-				if (groups == null) {
+
+			TimeSpan idleTimeSpan;
+			WebConnectionGroup singleGroup, singleRemove = null;
+			List<WebConnectionGroup> groupList = null, removeList = null;
+			lock (this) {
+				if (firstGroup == null) {
 					idleSince = DateTime.MinValue;
 					return true;
 				}
-				groupList = new List<WebConnectionGroup> (groups.Values);
+
+				idleTimeSpan = TimeSpan.FromMilliseconds (maxIdleTime);
+
+				/*
+				 * WebConnectionGroup.TryRecycle() must run outside the lock, so we need to
+				 * copy the group dictionary if it exists.
+				 * 
+				 * In most cases, we only have a single connection group, so we can simply store
+				 * that in a local variable instead of copying a collection.
+				 * 
+				 */
+
+				singleGroup = firstGroup;
+				if (groups != null)
+					groupList = new List<WebConnectionGroup> (groups.Values);
 			}
 
-			foreach (var group in groupList) {
-				if (!group.TryRecycle (TimeSpan.FromMilliseconds (maxIdleTime), ref outIdleSince, debug))
-					continue;
-				if (removeList == null)
-					removeList = new List<WebConnectionGroup> ();
-				removeList.Add (group);
+			if (singleGroup.TryRecycle (idleTimeSpan, ref outIdleSince))
+				singleRemove = singleGroup;
+
+			if (groupList != null) {
+				foreach (var group in groupList) {
+					if (!group.TryRecycle (idleTimeSpan, ref outIdleSince))
+						continue;
+					if (removeList == null)
+						removeList = new List<WebConnectionGroup> ();
+					removeList.Add (group);
+				}
 			}
 
-			lock (SyncRoot) {
+			lock (this) {
 				idleSince = outIdleSince;
+
+				if (singleRemove != null)
+					RemoveConnectionGroup (singleRemove);
+
 				if (removeList != null) {
 					foreach (var group in removeList)
-						groups.Remove (group.Name);
+						RemoveConnectionGroup (group);
 				}
 
-				if (debug)
-					Debug ("IDLE TIMER DONE: {0} {1}", groups.Count, idleSince);
+				if (groups != null && groups.Count == 0)
+					groups = null;
 
-				if (groups.Count == 0) {
+				if (firstGroup == null) {
 					idleTimer.Dispose ();
 					idleTimer = null;
+					return true;
 				}
 
-				return groups.Count == 0;
+				return false;
 			}
 		}
 
 		void IdleTimerCallback (object obj)
 		{
 			DateTime dummy;
-			CheckAvailableForRecycling (out dummy, true);
+			CheckAvailableForRecycling (out dummy);
 		}
 
 		internal IPHostEntry HostEntry
@@ -343,29 +422,11 @@ namespace System.Net
 		}
 
 #if !TARGET_JVM
-		WebConnectionGroup GetConnectionGroup (string name)
-		{
-			if (name == null)
-				name = "";
-
-			if (groups == null)
-				groups = new Dictionary<string, WebConnectionGroup> ();
-
-			WebConnectionGroup group;
-			if (groups.TryGetValue (name, out group))
-				return group;
-
-			group = new WebConnectionGroup (this, name);
-			group.ConnectionClosed += (s, e) => currentConnections--;
-			groups.Add (name, group);
-			return group;
-		}
-
 		internal EventHandler SendRequest (HttpWebRequest request, string groupName)
 		{
 			WebConnection cnc;
 			
-			lock (SyncRoot) {
+			lock (this) {
 				bool created;
 				WebConnectionGroup cncGroup = GetConnectionGroup (groupName);
 				cnc = cncGroup.GetConnection (request, out created);
@@ -381,7 +442,7 @@ namespace System.Net
 #endif
 		public bool CloseConnectionGroup (string connectionGroupName)
 		{
-			lock (SyncRoot) {
+			lock (this) {
 				WebConnectionGroup cncGroup = GetConnectionGroup (connectionGroupName);
 				if (cncGroup != null) {
 					cncGroup.Close ();

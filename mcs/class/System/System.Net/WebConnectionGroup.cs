@@ -70,7 +70,7 @@ namespace System.Net
 		{
 			//TODO: what do we do with the queue? Empty it out and abort the requests?
 			//TODO: abort requests or wait for them to finish
-			lock (sPoint.SyncRoot) {
+			lock (sPoint) {
 				closing = true;
 				foreach (var cnc in connections) {
 					if (cnc.Connection == null)
@@ -85,7 +85,7 @@ namespace System.Net
 
 		public WebConnection GetConnection (HttpWebRequest request, out bool created)
 		{
-			lock (sPoint.SyncRoot) {
+			lock (sPoint) {
 				return CreateOrReuseConnection (request, out created);
 			}
 		}
@@ -175,23 +175,26 @@ namespace System.Net
 			get { return queue; }
 		}
 
-		internal bool TryRecycle (TimeSpan maxIdleTime, ref DateTime idleSince, bool debug)
+		internal bool TryRecycle (TimeSpan maxIdleTime, ref DateTime idleSince)
 		{
+			var now = DateTime.UtcNow;
+
 		again:
 			bool recycled;
 			List<WebConnection> connectionsToClose = null;
 
-			lock (sPoint.SyncRoot) {
+			lock (sPoint) {
 				if (closing) {
 					idleSince = DateTime.MinValue;
 					return true;
 				}
 
 				int count = 0;
-				var list = new List<ConnectionState> (connections);
-				foreach (var cnc in list) {
+				for (var node = connections.First; node != null; node = node.Next) {
+					var cnc = node.Value;
+
 					if (cnc.Connection == null) {
-						connections.Remove (cnc);
+						connections.Remove (node);
 						OnConnectionClosed ();
 						continue;
 					}
@@ -200,20 +203,14 @@ namespace System.Net
 					if (cnc.Busy)
 						continue;
 
-					if (debug)
-						sPoint.Debug ("CHECK IDLE: {0} {1} {2}", DateTime.UtcNow - cnc.IdleSince, count, sPoint.ConnectionLimit);
-
-					if (count <= sPoint.ConnectionLimit && DateTime.UtcNow - cnc.IdleSince < maxIdleTime) {
+					if (count <= sPoint.ConnectionLimit && now - cnc.IdleSince < maxIdleTime) {
 						if (cnc.IdleSince > idleSince)
 							idleSince = cnc.IdleSince;
 						continue;
 					}
 
-					if (debug)
-						sPoint.Debug ("CLOSE IDLE CONNECTION: {0}", cnc.Connection);
-
 					/*
-					 * Do not call WebConnection.Close() while holding the ServicePoint.SyncRoot lock
+					 * Do not call WebConnection.Close() while holding the ServicePoint lock
 					 * as this could deadlock when attempting to take the WebConnection lock.
 					 * 
 					 */
@@ -255,24 +252,16 @@ namespace System.Net
 			DateTime idleSince;
 
 			public bool Busy {
-				get {
-					lock (ServicePoint.SyncRoot) {
-						return busy;
-					}
-				}
+				get { return busy; }
 			}
 
 			public DateTime IdleSince {
-				get {
-					lock (ServicePoint.SyncRoot) {
-						return idleSince;
-					}
-				}
+				get { return idleSince; }
 			}
 
 			public bool TrySetBusy ()
 			{
-				lock (ServicePoint.SyncRoot) {
+				lock (ServicePoint) {
 					if (busy)
 						return false;
 					busy = true;
@@ -283,7 +272,7 @@ namespace System.Net
 
 			public void SetIdle ()
 			{
-				lock (ServicePoint.SyncRoot) {
+				lock (ServicePoint) {
 					busy = false;
 					idleSince = DateTime.UtcNow;
 				}

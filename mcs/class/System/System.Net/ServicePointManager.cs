@@ -397,7 +397,7 @@ namespace System.Net
 				while (e.MoveNext ()) {
 					ServicePoint sp = (ServicePoint) e.Value;
 					DateTime idleSince;
-					if (sp.CheckAvailableForRecycling (out idleSince, false)) {
+					if (sp.CheckAvailableForRecycling (out idleSince)) {
 						toRemove.Add (e.Key);
 						continue;
 					}
