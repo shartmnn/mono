@@ -281,20 +281,19 @@ namespace System.Net
 		{
 			if (groups == null || groups.Count == 0) {
 				// No more connection groups left.
-				if (group != firstGroup) {
-					// This should never happen.
-					Console.Error.WriteLine ("Attempting to remove unknown WebConnectionGroup '{0}'.", group.Name);
-				} else
+				if (group != firstGroup)
+					throw new InvalidOperationException ();
+				else
 					firstGroup = null;
 				return;
 			}
 
 			if (group == firstGroup) {
 				// Steal one entry from the dictionary.
-				var keys = new string [groups.Count];
-				groups.Keys.CopyTo (keys, 0);
-				firstGroup = groups [keys [0]];
-				groups.Remove (keys [0]);
+				var en = groups.GetEnumerator ();
+				en.MoveNext ();
+				firstGroup = en.Current.Value;
+				groups.Remove (en.Current.Key);
 			} else {
 				groups.Remove (group.Name);
 			}
