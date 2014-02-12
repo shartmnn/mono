@@ -186,7 +186,6 @@ namespace System.Net
 
 		internal int ReadBufferOffset {
 			set {
-				Debug ("SET READ BUFFER OFFSET: {0} -> {1}", readBufferOffset, value);
 				readBufferOffset = value;
 			}
 		}
@@ -203,15 +202,8 @@ namespace System.Net
 			get { return writeBuffer != null ? (int) writeBuffer.Length : (-1); }
 		}
 
-		[Conditional ("DEBUG")]
-		void Debug (string message, params object[] args)
-		{
-			Console.WriteLine ("[{0}]: {1}", Thread.CurrentThread.ManagedThreadId, string.Format (message, args));
-		}
-
 		internal void ForceCompletion ()
 		{
-			Debug ("FORCE COMPLETION: {0}", nextReadCalled);
 			if (!nextReadCalled) {
 				if (contentLength == Int32.MaxValue)
 					contentLength = 0;
@@ -225,14 +217,12 @@ namespace System.Net
 			var nrc = nextReadCalled;
 			var cstr = cnc.ChunkStream;
 
-			Debug ("CHECK COMPLETE: {0} {1} {2} {3} {4} {5}", nrc, readBufferOffset, readBufferSize, contentLength, readBufferSize - readBufferOffset == contentLength, cstr != null);
 			if (nrc)
 				return;
 			if (readBufferSize - readBufferOffset == contentLength) {
 				nextReadCalled = true;
 				cnc.NextRead ();
 			} else if (cstr != null && cstr.TotalDataSize == contentLength) {
-				Debug ("CHECK COMPLETE - CHUNK COMPLETED");
 				nextReadCalled = true;
 				cnc.NextRead ();
 			}
@@ -240,9 +230,7 @@ namespace System.Net
 
 		internal void ReadAll ()
 		{
-			Debug ("READ ALL: {0} {1} {2}", isRead, read_eof, totalRead, contentLength, nextReadCalled);
 			if (!isRead || read_eof || totalRead >= contentLength || nextReadCalled) {
-				Debug ("READ ALL #1: {0} {1}", isRead, nextReadCalled);
 				if (isRead && !nextReadCalled) {
 					nextReadCalled = true;
 					cnc.NextRead ();
@@ -252,7 +240,6 @@ namespace System.Net
 
 			pending.WaitOne ();
 			lock (locker) {
-				Debug ("READ ALL #2: {0} {1}", totalRead, contentLength);
 				if (totalRead >= contentLength)
 					return;
 				
@@ -297,8 +284,6 @@ namespace System.Net
 						diff += r;
 					}
 				}
-
-				Debug ("READ ALL #3: {0}", new_size);
 
 				readBuffer = b;
 				readBufferOffset = 0;
@@ -377,7 +362,6 @@ namespace System.Net
 			}
 
 			WebAsyncResult result = new WebAsyncResult (cb, state, buffer, offset, size);
-			Debug ("WCS BEGIN READ: {0} {1} - {2} {3} - {4} {5} - {6}", offset, size, totalRead, contentLength, readBufferOffset, readBufferSize, readBufferSize - readBufferOffset);
 			if (totalRead >= contentLength) {
 				result.SetCompleted (true, -1);
 				result.DoCallback ();
@@ -405,8 +389,6 @@ namespace System.Net
 
 			if (contentLength != Int32.MaxValue && contentLength - totalRead < size)
 				size = contentLength - totalRead;
-
-			Debug ("WCS BEGIN READ #1: {0}", read_eof);
 
 			if (!read_eof) {
 				result.InnerAsyncResult = cnc.BeginRead (request, buffer, offset, size, cb, result);
@@ -774,13 +756,9 @@ namespace System.Net
 				return;
 			}
 
-			Debug ("WCS CLOSE: {0} {1} {2}", isRead, nextReadCalled, allowBuffering);
-
 			if (isRead) {
-				Debug ("WCS CLOSE #1: {0}", nextReadCalled);
 				if (!nextReadCalled) {
 					CheckComplete ();
-					Debug ("WCS CLOSE #2: {0}", nextReadCalled);
 					// If we have not read all the contents
 					if (!nextReadCalled) {
 						nextReadCalled = true;

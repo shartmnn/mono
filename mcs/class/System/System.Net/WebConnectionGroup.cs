@@ -119,12 +119,6 @@ namespace System.Net
 			}
 		}
 
-		[Conditional ("DEBUG")]
-		void Debug (string message, params object[] args)
-		{
-			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
-		}
-
 		ConnectionState FindIdleConnection ()
 		{
 			foreach (var cnc in connections) {
@@ -142,14 +136,11 @@ namespace System.Net
 		WebConnection CreateOrReuseConnection (HttpWebRequest request, out bool created)
 		{
 			var cnc = FindIdleConnection ();
-			Debug ("WCG CREATE OR REUSE: {0}", cnc != null);
 			if (cnc != null) {
 				created = false;
 				PrepareSharingNtlm (cnc.Connection, request);
 				return cnc.Connection;
 			}
-
-			Debug ("WCG CREATE OR REUSE #2: {0} {1}", sPoint.ConnectionLimit, connections.Count);
 
 			if (sPoint.ConnectionLimit > connections.Count) {
 				created = true;
@@ -157,8 +148,6 @@ namespace System.Net
 				connections.AddFirst (cnc);
 				return cnc.Connection;
 			}
-
-			Debug ("WCG CREATE OR REUSE #3");
 
 			created = false;
 			cnc = connections.Last.Value;

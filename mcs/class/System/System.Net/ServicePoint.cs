@@ -244,12 +244,6 @@ namespace System.Net
 			set { useConnect = value; }
 		}
 
-		[Conditional ("SP_DEBUG")]
-		internal void Debug (string message, params object[] args)
-		{
-			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
-		}
-
 		WebConnectionGroup GetConnectionGroup (string name)
 		{
 			if (name == null)

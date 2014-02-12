@@ -144,30 +144,19 @@ namespace System.Net
 			}
 		}
 
-		[Conditional ("DEBUG")]
-		void Debug (string message, params object[] args)
-		{
-			Console.WriteLine ("[{0}:{1}]: {2}", Thread.CurrentThread.ManagedThreadId, id, string.Format (message, args));
-		}
-
 		bool CanReuse ()
 		{
 			// The real condition is !(socket.Poll (0, SelectMode.SelectRead) || socket.Available != 0)
 			// but if there's data pending to read (!) we won't reuse the socket.
-			var canReuse = (socket.Poll (0, SelectMode.SelectRead) == false);
-			Debug ("CAN REUSE: {0}", canReuse);
-			return canReuse;
+			return (socket.Poll (0, SelectMode.SelectRead) == false);
 		}
 		
 		void Connect (HttpWebRequest request)
 		{
 			lock (socketLock) {
-				Debug  ("CONNECT: {0}", socket != null);
 				if (socket != null && socket.Connected && status == WebExceptionStatus.Success) {
-					Debug ("CONNECT #1");
 					// Take the chunked stream to the expected state (State.None)
 					if (CanReuse () && CompleteChunkedRead ()) {
-						Debug ("CONNECT #2");
 						reused = true;
 						return;
 					}
@@ -178,8 +167,6 @@ namespace System.Net
 					socket.Close();
 					socket = null;
 				}
-
-				Debug ("CONNECT #3");
 
 				chunkStream = null;
 				IPHostEntry hostEntry = sPoint.HostEntry;
@@ -221,7 +208,6 @@ namespace System.Net
 						socket.Close ();
 						socket = null;
 						status = WebExceptionStatus.ConnectFailure;
-						Debug ("CONNECT FAILURE");
 					} else {
 						try {
 							if (request.Aborted)
@@ -524,7 +510,6 @@ namespace System.Net
 			WebConnection cnc = (WebConnection)result.AsyncState;
 			WebConnectionData data = cnc.Data;
 			Stream ns = cnc.nstream;
-			cnc.Debug ("CNC READ DONE: {0}", ns != null);
 			if (ns == null) {
 				cnc.Close (true);
 				return;
@@ -555,7 +540,6 @@ namespace System.Net
 
 			int pos = -1;
 			nread += cnc.position;
-			cnc.Debug ("CNC READ DONE #1: {0} {1}", nread, data.ReadState);
 			if (data.ReadState == ReadState.None) { 
 				Exception exc = null;
 				try {
@@ -596,7 +580,6 @@ namespace System.Net
 				tencoding = data.Headers ["Transfer-Encoding"];
 
 			cnc.chunkedRead = (tencoding != null && tencoding.IndexOf ("chunked", StringComparison.OrdinalIgnoreCase) != -1);
-			cnc.Debug ("CNC READ DONE #2: {0} {1} {2} {3}", cnc.chunkedRead, cnc.chunkStream != null, pos, nread);
 			if (!cnc.chunkedRead) {
 				stream.ReadBuffer = cnc.buffer;
 				stream.ReadBufferOffset = pos;
@@ -822,9 +805,7 @@ namespace System.Net
 				return null;
 
 			lock (this) {
-				var success = state.TrySetBusy ();
-				Debug ("SEND REQUEST: {0}", success);
-				if (success) {
+				if (state.TrySetBusy ()) {
 					status = WebExceptionStatus.Success;
 					ThreadPool.QueueUserWorkItem (initConn, request);
 				} else {
@@ -854,8 +835,6 @@ namespace System.Net
 
 		internal void NextRead ()
 		{
-			Debug ("NEXT READ");
-
 			lock (this) {
 				if (Data.request != null)
 					Data.request.FinishedReading = true;
@@ -867,15 +846,10 @@ namespace System.Net
 					keepAlive = (this.keepAlive && cncHeader.IndexOf ("keep-alive", StringComparison.Ordinal) != -1);
 				}
 
-				Debug ("NEXT READ: {0} {1}", keepAlive, socket != null);
-
 				if ((socket != null && !socket.Connected) ||
 				   (!keepAlive || (cncHeader != null && cncHeader.IndexOf ("close", StringComparison.Ordinal) != -1))) {
-					Debug ("NEXT READ - CLOSE");
 					Close (false);
 				}
-
-				Debug ("NEXT READ #1: {0}", priority_request != null);
 
 				state.SetIdle ();
 				if (priority_request != null) {
@@ -939,7 +913,6 @@ namespace System.Net
 				if (nstream == null)
 					return null;
 				s = nstream;
-				Debug ("CNC BEGIN READ: {0}", nstream);
 			}
 
 			IAsyncResult result = null;
@@ -1223,8 +1196,6 @@ namespace System.Net
 					} catch {}
 					nstream = null;
 				}
-
-				Debug ("CNC CLOSE: {0} {1}", sendNext, socket != null);
 
 				if (socket != null) {
 					try {
