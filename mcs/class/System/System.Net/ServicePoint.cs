@@ -46,17 +46,17 @@ namespace System.Net
 		int connectionLimit;
 		int maxIdleTime;
 		int currentConnections;
+		int currentAddressIndex;
 		DateTime idleSince;
 		DateTime lastDnsResolve;
+		IPAddress[] addressList;
 		Version protocolVersion;
 		X509Certificate certificate;
 		X509Certificate clientCertificate;
-		IPHostEntry host;
 		bool usesProxy;
 		Dictionary<string,WebConnectionGroup> groups;
 		bool sendContinue = true;
 		bool useConnect;
-		object hostE = new object ();
 		bool useNagle;
 		BindIPEndPoint endPointCallback = null;
 		bool tcp_keepalive;
@@ -349,26 +349,54 @@ namespace System.Net
 			}
 		}
 
-		internal IPHostEntry HostEntry
+		internal IPAddress[] GetIPAddressList (out int currentIndex)
 		{
-			get {
-				lock (hostE) {
-					string uriHost = uri.Host;
+			IPHostEntry hostEntry = null;
+			bool needDnsLookup = false;
+			string uriHost;
+			currentIndex = 0;
 
-					if (host == null || HasTimedOut) {
-						lastDnsResolve = DateTime.UtcNow;
+			lock (this) {
+				uriHost = uri.Host;
 
-						try {
-							host = Dns.GetHostEntry (uriHost);
-						}
-						catch (Exception) {
-							return null;
-						}
+				if (addressList == null || HasTimedOut) {
+					lastDnsResolve = DateTime.UtcNow;
+					needDnsLookup = true;
+				}
+			}
+
+			if (needDnsLookup) {
+				try {
+					hostEntry = Dns.GetHostEntry (uriHost);
+				}
+				catch {
+					return null;
+				}
+			}
+
+			lock (this) {
+				if (needDnsLookup) {
+					addressList = null;
+
+					if (hostEntry != null) {
+						addressList = hostEntry.AddresseList;
 					}
 				}
 
-				return host;
+				if (addressList != null && addressList.Length > 0) {
+					currentIndex = currentAddressIndex;
+
+					if (ServicePointManager.EnableDnsRoundRobin) {
+							currentAddressIndex++;
+							if (currentAddressIndex >= addressList.Length) {
+								currentAddressIndex = 0;
+							}
+					}
+					return addressList;
+				}
 			}
+
+			return null;
 		}
 
 		internal void SetVersion (Version version)

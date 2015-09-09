@@ -135,6 +135,7 @@ namespace System.Net
 		private static int maxServicePointIdleTime = 100000; // 100 seconds
 		private static int maxServicePoints = 0;
 		private static int dnsRefreshTimeout = 2 * 60 * 1000;
+		private static bool enableDnsRoundRobin = false;
 		private static bool _checkCRL = false;
 		private static SecurityProtocolType _securityProtocol = SecurityProtocolType.Ssl3 | SecurityProtocolType.Tls;
 
@@ -214,11 +215,6 @@ namespace System.Net
 			}
 		}
 
-		static Exception GetMustImplement ()
-		{
-			return new NotImplementedException ();
-		}
-		
 		public static int DnsRefreshTimeout
 		{
 			get {
@@ -229,14 +225,13 @@ namespace System.Net
 			}
 		}
 		
-		[MonoTODO]
 		public static bool EnableDnsRoundRobin
 		{
 			get {
-				throw GetMustImplement ();
+				return enableDnsRoundRobin;
 			}
 			set {
-				throw GetMustImplement ();
+				enableDnsRoundRobin = true;
 			}
 		}
 		

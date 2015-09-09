@@ -167,13 +167,14 @@ namespace System.Net
 				}
 
 				chunkStream = null;
-				IPHostEntry hostEntry = sPoint.HostEntry;
+				int currentIndex;
+				IPAddress[] addressList  = sPoint.GetIPAddressList (out currentIndex);
 
-				if (hostEntry == null) {
+				if (addressList == null) {
 #if MONOTOUCH
 					xamarin_start_wwan (sPoint.Address.ToString ());
-					hostEntry = sPoint.HostEntry;
-					if (hostEntry == null) {
+					addressList = sPoint.GetIPAddressList (out currentIndex);
+					if (addressList == null) {
 #endif
 						status = sPoint.UsesProxy ? WebExceptionStatus.ProxyNameResolutionFailure :
 									    WebExceptionStatus.NameResolutionFailure;
@@ -184,7 +185,9 @@ namespace System.Net
 				}
 
 				//WebConnectionData data = Data;
-				foreach (IPAddress address in hostEntry.AddressList) {
+				for (int i = 0; i < addressList.Length; i++) {
+					IPAddress address = addressList[currentIndex];
+
 					try {
 						socket = new Socket (address.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 					} catch (Exception se) {
@@ -232,6 +235,11 @@ namespace System.Net
 								status = WebExceptionStatus.ConnectFailure;
 							connect_exception = exc;
 						}
+					}
+
+					currentIndex++;
+					if (currentIndex >= addresseList.Length) {
+						currentIndex = 0;
 					}
 				}
 			}
